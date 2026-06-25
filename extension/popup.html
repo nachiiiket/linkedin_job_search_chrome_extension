@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><link rel="stylesheet" href="styles.css"></head>
+<body>
+<div class="popup-container">
+  <div class="popup-header"><img src="icons/icon48.png" alt="" class="popup-icon"><h1>LinkedIn Job Finder</h1></div>
+  <div class="status-section">
+    <div class="status-row"><span class="label">Status</span><span id="statusText" class="status-idle">Idle</span></div>
+    <div class="stats-row">
+      <div class="stat"><span id="statTotal" class="stat-number">0</span><span class="stat-label">Found</span></div>
+      <div class="stat"><span id="statApplied" class="stat-number">0</span><span class="stat-label">Applied</span></div>
+      <div class="stat"><span id="statConnected" class="stat-number">0</span><span class="stat-label">Connected</span></div>
+    </div>
+  </div>
+  <div class="mode-select">
+    <span class="label">Search</span>
+    <select id="searchMode">
+      <option value="jobs">Jobs</option>
+      <option value="posts">Posts</option>
+      <option value="both">Both</option>
+    </select>
+  </div>
+  <div class="mode-select">
+    <label><input type="checkbox" id="onlyWithEmail"> Only save with email</label>
+    <label><input type="checkbox" id="jobsFirstPageOnly" checked> First page only</label>
+  </div>
+  <div class="mode-select">
+    <span class="label">Target Companies (optional, for post search)</span>
+    <input type="text" id="popupCompanies" placeholder="Google, Microsoft, NVIDIA..." style="width:100%;box-sizing:border-box;padding:4px 6px">
+  </div>
+  <div class="actions">
+    <button id="btnStart" class="btn btn-primary">Start Scraping</button>
+    <button id="btnStop" class="btn btn-danger" style="display:none">Stop</button>
+    <button id="btnDashboard" class="btn btn-secondary">Dashboard</button>
+  </div>
+  <div class="log-section">
+    <div class="log-header">Log</div>
+    <div id="logList" class="log-list"></div>
+  </div>
+</div>
+<script src="utils/storage.js"></script>
+<script src="popup.js"></script>
+</body>
+</html>
