@@ -61,3 +61,7 @@ A Chrome extension to scrape LinkedIn job listings and posts, track applications
 - The extension will only activate on `linkedin.com` pages
 - Scraping speed includes built-in delays to avoid rate limiting
 - If the extension stops responding, refresh the LinkedIn page
+
+## Disclaimer
+
+This extension is provided **for educational and personal use only**. Scraping LinkedIn may violate LinkedIn's User Agreement. Use at your own risk. The author is not responsible for any misuse or any violations of platform terms of service.
