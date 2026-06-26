@@ -347,8 +347,10 @@ function extractPostUrl(el, knownUrn) {
   }
   for (const a of el.querySelectorAll("a")) {
     const h = a.href || "";
-    if (/linkedin\.com\/(feed\/update|activity)/.test(h) && !h.includes("/in/")) return h.split("?")[0];
+    const path = a.getAttribute("href") || "";
+    if (/linkedin\.com\/(feed\/update|activity|posts\/)/.test(h) && !h.includes("/in/")) return h.split("?")[0];
     if (h.includes("urn:li:activity")) return h.split("?")[0];
+    if (/^\/(feed\/update\/urn:li:activity:\d+|posts\/.*activity)/.test(path)) return "https://www.linkedin.com" + path.split("?")[0];
   }
   if (urn) {
     const match = urn.match(/urn:li:activity:\d+/);
