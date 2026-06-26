@@ -66,8 +66,10 @@ function renderJobs(jobs) {
       j.poster_name ? j.poster_name + (j.poster_title ? " - " + j.poster_title : "") : "-",
       j.email || "-",
     ];
-    cells.forEach(t => {
-      const td = document.createElement("td"); td.textContent = t || "-"; td.title = t || ""; tr.appendChild(td);
+    cells.forEach((t, i) => {
+      const td = document.createElement("td"); td.textContent = t || "-"; td.title = t || "";
+      if (i === 4) td.className = "email-cell";
+      tr.appendChild(td);
     });
     const urlTd = document.createElement("td");
     if (j.job_url) { const a = document.createElement("a"); a.href = j.job_url; a.textContent = "Open"; a.target = "_blank"; urlTd.appendChild(a); }
@@ -104,6 +106,12 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("btnExportCSV").addEventListener("click", () => { Storage.getJobs().then(j => Exporter.downloadCSV(j)); });
   document.getElementById("btnExportXLS").addEventListener("click", () => { Storage.getJobs().then(j => Exporter.downloadXLS(j)); });
   document.getElementById("btnClear").addEventListener("click", () => { if (confirm("Delete all?")) { if (port) port.postMessage({ action: "clearJobs" }); } });
+  document.getElementById("btnCollapseSidebar").addEventListener("click", () => {
+    document.getElementById("sidebar").classList.add("collapsed");
+  });
+  document.getElementById("btnExpandSidebar").addEventListener("click", () => {
+    document.getElementById("sidebar").classList.remove("collapsed");
+  });
   document.getElementById("tabAll").addEventListener("click", () => switchTab("tabAll"));
   document.getElementById("tabWithEmail").addEventListener("click", () => switchTab("tabWithEmail"));
   document.getElementById("tabWithoutEmail").addEventListener("click", () => switchTab("tabWithoutEmail"));
