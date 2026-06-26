@@ -19,43 +19,51 @@
     </div>
   </header>
 
-  <div class="dashboard-grid">
-    <section class="card config-section">
-      <h2>Preferences</h2>
-      <div class="form-group"><label>Job Roles (one per line)</label><textarea id="jobRoles" rows="6" placeholder="AI Engineer"></textarea></div>
-      <div class="form-group"><label>Locations (one per line)</label><textarea id="locations" rows="3" placeholder="Pune"></textarea></div>
-      <div class="form-group"><label>Target Companies (included in post search)</label><textarea id="targetCompanies" rows="2" placeholder="Google, Microsoft, ..."></textarea></div>
-      <div class="form-row">
-        <div class="form-group half"><label><input type="checkbox" id="easyApplyOnly"> Easy Apply only</label></div>
-        <div class="form-group half"><label>Posted within (days)</label><input type="number" id="postedWithinDays" min="1" max="30" value="1"></div>
+  <div class="dashboard-body">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <h2>Preferences</h2>
+        <button id="btnCollapseSidebar" class="sidebar-toggle" title="Collapse sidebar">◀</button>
       </div>
-      <div class="form-row">
-        <div class="form-group half"><label><input type="checkbox" id="jobsFirstPageOnly" checked> Jobs first page only</label></div>
-        <div class="form-group half"><label><input type="checkbox" id="onlyWithEmail"> Only save with email</label></div>
+      <div class="sidebar-content">
+        <div class="form-group"><label>Job Roles (one per line)</label><textarea id="jobRoles" rows="6" placeholder="AI Engineer"></textarea></div>
+        <div class="form-group"><label>Locations (one per line)</label><textarea id="locations" rows="3" placeholder="Pune"></textarea></div>
+        <div class="form-group"><label>Target Companies (included in post search)</label><textarea id="targetCompanies" rows="2" placeholder="Google, Microsoft, ..."></textarea></div>
+        <div class="form-row">
+          <div class="form-group half"><label><input type="checkbox" id="easyApplyOnly"> Easy Apply only</label></div>
+          <div class="form-group half"><label>Posted within (days)</label><input type="number" id="postedWithinDays" min="1" max="30" value="1"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group half"><label><input type="checkbox" id="jobsFirstPageOnly" checked> Jobs first page only</label></div>
+          <div class="form-group half"><label><input type="checkbox" id="onlyWithEmail"> Only save with email</label></div>
+        </div>
+        <div class="form-group"><label>Max per run</label><input type="number" id="maxJobsPerRun" min="1" max="200" value="50"></div>
+        <button id="btnSavePrefs" class="btn btn-primary">Save</button><span id="saveStatus" class="save-status"></span>
       </div>
-      <div class="form-group"><label>Max per run</label><input type="number" id="maxJobsPerRun" min="1" max="200" value="50"></div>
-      <button id="btnSavePrefs" class="btn btn-primary">Save</button><span id="saveStatus" class="save-status"></span>
-    </section>
+    </aside>
 
-    <section class="card results-section">
-      <h2>Results</h2>
-      <div class="stats-bar">
-        <div class="stat"><span id="dashTotal" class="stat-number">0</span> Total</div>
-        <div class="stat"><span id="dashWithEmail" class="stat-number">0</span> With Email</div>
-        <div class="stat"><span id="dashApplied" class="stat-number">0</span> Applied</div>
-        <div class="stat"><span id="dashConnected" class="stat-number">0</span> Connected</div>
-      </div>
-      <div class="tabs">
-        <button id="tabAll" class="tab active">All</button>
-        <button id="tabWithEmail" class="tab">With Email</button>
-        <button id="tabWithoutEmail" class="tab">Without Email</button>
+    <button id="btnExpandSidebar" class="sidebar-expand-btn" title="Show preferences">▶</button>
+
+    <main class="main-content">
+      <div class="results-header">
+        <div class="stats-bar">
+          <div class="stat"><span id="dashTotal" class="stat-number">0</span> Total</div>
+          <div class="stat"><span id="dashWithEmail" class="stat-number">0</span> With Email</div>
+          <div class="stat"><span id="dashApplied" class="stat-number">0</span> Applied</div>
+          <div class="stat"><span id="dashConnected" class="stat-number">0</span> Connected</div>
+        </div>
+        <div class="tabs">
+          <button id="tabAll" class="tab active">All</button>
+          <button id="tabWithEmail" class="tab">With Email</button>
+          <button id="tabWithoutEmail" class="tab">Without Email</button>
+        </div>
       </div>
       <div class="table-wrapper">
         <table class="jobs-table"><thead><tr><th>Position</th><th>Company</th><th>Location</th><th>Poster</th><th>Email</th><th>Post/Job URL</th><th>Profile</th><th>Date</th></tr></thead>
         <tbody id="jobsBody"></tbody></table>
       </div>
       <p id="emptyMsg" class="empty-msg">No jobs tracked yet.</p>
-    </section>
+    </main>
   </div>
 </div>
 <script src="utils/storage.js"></script>

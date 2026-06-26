@@ -137,7 +137,7 @@ const LinkedinParser = {
       if (m && !result.company) result.company = m[1].replace(/[-_]/g, " ").replace(/\b\w/g, c => c.toUpperCase());
     }
 
-    if (tags.emails && tags.emails.length) result.email = tags.emails[0];
+    if (tags.emails && tags.emails.length) result.email = tags.emails.join("\n");
     const skills = this.extractSkills(body);
     if (skills.length) result.notes = `skills: ${skills.slice(0, 5).join(", ")}`;
 

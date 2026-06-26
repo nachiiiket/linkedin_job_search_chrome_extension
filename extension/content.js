@@ -1,6 +1,7 @@
 let shouldStop = false;
 
 function rand(lo, hi) { return new Promise(r => setTimeout(r, lo + Math.random() * (hi - lo))); }
+function closeMenu() { document.body.click(); document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })); }
 function send(a, d) { try { chrome.runtime.sendMessage({ action: a, ...(d || {}) }, () => {}); } catch (e) {} }
 
 async function checkStop() {
@@ -51,7 +52,7 @@ function extractEmails(text) {
     if (VALID_EMAIL.test(clean)) all.push(clean);
   }
   const BAD_EMAIL_PARTS = [".png", ".jpg", ".svg", ".gif", "example.com", "sentry.io", "linkedin.com"];
-  return [...new Set(all)].filter(e => !BAD_EMAIL_PARTS.some(b => e.toLowerCase().includes(b))).join(", ");
+  return [...new Set(all)].filter(e => !BAD_EMAIL_PARTS.some(b => e.toLowerCase().includes(b))).join("\n");
 }
 
 /* ====== JOBS SEARCH ====== */
@@ -325,38 +326,91 @@ function extractPosterFromFeed(el) {
   return r;
 }
 
-function extractPostUrl(el, knownUrn) {
-  const findUrn = () => {
-    if (knownUrn && knownUrn.includes("activity")) return knownUrn;
-    const fromAttr = el.getAttribute("data-urn") || "";
-    if (fromAttr.includes("activity")) return fromAttr;
-    const child = el.querySelector("[data-urn]");
-    if (child) { const v = child.getAttribute("data-urn") || ""; if (v.includes("activity")) return v; }
-    const all = el.querySelectorAll("*");
-    for (const node of all) {
-      for (const attr of node.attributes || []) {
-        if (attr.value && attr.value.includes("urn:li:activity")) return attr.value;
-      }
+function findUrnInEl(el) {
+  if (!el) return "";
+  const fromAttr = el.getAttribute("data-urn") || "";
+  if (fromAttr.includes("urn:li:activity")) return fromAttr;
+  const child = el.querySelector("[data-urn]");
+  if (child) { const v = child.getAttribute("data-urn") || ""; if (v.includes("urn:li:activity")) return v; }
+  const all = el.querySelectorAll("*");
+  for (const node of all) {
+    for (const attr of node.attributes || []) {
+      if (attr.value && attr.value.includes("urn:li:activity")) return attr.value;
     }
-    return "";
-  };
-  const urn = findUrn();
-  if (urn) {
-    const match = urn.match(/urn:li:activity:\d+/);
-    if (match) return "https://www.linkedin.com/feed/update/" + match[0] + "/";
   }
-  for (const a of el.querySelectorAll("a")) {
+  return "";
+}
+
+function searchAnchors(root) {
+  if (!root) return "";
+  for (const a of root.querySelectorAll("a")) {
     const h = a.href || "";
     const path = a.getAttribute("href") || "";
     if (/linkedin\.com\/(feed\/update|activity|posts\/)/.test(h) && !h.includes("/in/")) return h.split("?")[0];
     if (h.includes("urn:li:activity")) return h.split("?")[0];
+    const updateUrnMatch = h.match(/[?&]updateUrn=([^&]+)/);
+    if (updateUrnMatch) {
+      const actMatch = decodeURIComponent(updateUrnMatch[1]).match(/urn:li:activity:\d+/);
+      if (actMatch) return "https://www.linkedin.com/feed/update/" + actMatch[0] + "/";
+    }
     if (/^\/(feed\/update\/urn:li:activity:\d+|posts\/.*activity)/.test(path)) return "https://www.linkedin.com" + path.split("?")[0];
   }
+  return "";
+}
+
+function extractPostUrl(el, knownUrn) {
+  if (knownUrn && knownUrn.includes("activity")) {
+    const match = knownUrn.match(/urn:li:activity:\d+/);
+    if (match) return "https://www.linkedin.com/feed/update/" + match[0] + "/";
+  }
+  let urn = findUrnInEl(el);
   if (urn) {
     const match = urn.match(/urn:li:activity:\d+/);
     if (match) return "https://www.linkedin.com/feed/update/" + match[0] + "/";
   }
+  let url = searchAnchors(el);
+  if (url) return url;
+  const outer = el.closest('[role="listitem"], li.reusable-search__result-container, .reusable-search__result-container');
+  if (outer && outer !== el) {
+    url = searchAnchors(outer);
+    if (url) return url;
+    urn = findUrnInEl(outer);
+    if (urn) {
+      const match = urn.match(/urn:li:activity:\d+/);
+      if (match) return "https://www.linkedin.com/feed/update/" + match[0] + "/";
+    }
+  }
   return window.location.href.split("?")[0];
+}
+
+async function extractPostUrlWithMenu(el, knownUrn) {
+  const normalUrl = extractPostUrl(el, knownUrn);
+  if (normalUrl && !normalUrl.includes("/search/results/content")) return normalUrl;
+
+  const btn = el.querySelector('button[aria-label*="Open control menu"]')
+    || (el.closest('[role="listitem"], li.reusable-search__result-container')
+      ?.querySelector('button[aria-label*="Open control menu"]'));
+  if (!btn) return normalUrl;
+
+  btn.click();
+  await rand(400, 700);
+
+  for (const a of document.querySelectorAll('a[href*="updateUrn"]')) {
+    if (a.offsetParent === null) continue;
+    const h = a.href || "";
+    const m = h.match(/[?&]updateUrn=([^&]+)/);
+    if (m) {
+      const act = decodeURIComponent(m[1]).match(/urn:li:activity:\d+/);
+      if (act) {
+        closeMenu();
+        await rand(300, 500);
+        return "https://www.linkedin.com/feed/update/" + act[0] + "/";
+      }
+    }
+  }
+
+  closeMenu();
+  return normalUrl;
 }
 
 // fix: removed onlyWithEmail filter — posts always saved; dashboard "Without Email" tab handles filtering
@@ -432,7 +486,7 @@ async function scrapePosts(cfg) {
 
       const meta = extractPostMeta(el);
       const poster = extractPosterFromFeed(el);
-      const postUrl = extractPostUrl(el, urn);
+      const postUrl = await extractPostUrlWithMenu(el, urn);
       const parsed = LinkedinParser.parsePost(cleanText, meta.profileUrl || poster.poster_profile_url, meta.dateText, "", poster.poster_name);
 
       if (parsed) {
