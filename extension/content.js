@@ -1,6 +1,10 @@
 let shouldStop = false;
+let _speedFactor = 1;
 
-function rand(lo, hi) { return new Promise(r => setTimeout(r, lo + Math.random() * (hi - lo))); }
+function rand(lo, hi) {
+  const delay = (lo + Math.random() * (hi - lo)) * _speedFactor;
+  return new Promise(r => setTimeout(r, delay));
+}
 function closeMenu() { document.body.click(); document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })); }
 function send(a, d) { try { chrome.runtime.sendMessage({ action: a, ...(d || {}) }, () => {}); } catch (e) {} }
 
@@ -89,7 +93,7 @@ function getJobIds() {
 
 function scrollJobs() {
   const c = document.querySelector(".jobs-search-results-list, .scaffold-layout__list");
-  if (c) c.scrollTop = c.scrollHeight; else window.scrollBy(0, 400);
+  if (c) c.scrollTop = c.scrollHeight; else window.scrollTo(0, document.body.scrollHeight);
 }
 
 async function clickCard(jid) {
@@ -185,7 +189,7 @@ function postsUrl(query) {
 
 function simulateClick(el) {
   if (!el || el.offsetParent === null) return;
-  el.focus();
+  el.focus({ preventScroll: true });
   ["pointerover", "pointerenter", "pointerdown", "pointerup", "click"].forEach(evtName => {
     try { el.dispatchEvent(new PointerEvent(evtName, { bubbles: true, cancelable: true, pointerType: "mouse", view: window })); } catch(e) {}
   });
@@ -212,7 +216,6 @@ async function clickSeeMore(el) {
   const tryClick = async (b) => {
     if (!b || seen.has(b)) return;
     seen.add(b);
-    try { b.scrollIntoView({ block: "center" }); } catch(e) {}
     for (let attempt = 0; attempt < 2; attempt++) {
       simulateClick(b);
       await rand(400, 700);
@@ -586,6 +589,10 @@ async function runPhase(cfg, phase, startIdx) {
 // doesn't immediately abort a fresh start
 async function runAll(cfg) {
   shouldStop = false;
+  const speed = cfg.scrapeSpeed || "normal";
+  if (speed === "fast") _speedFactor = 0.35;
+  else if (speed === "max") _speedFactor = 0;
+  else _speedFactor = 1;
   const mode = cfg.searchMode || "jobs";
   await Storage.setState({ status: "scraping", mode, totalFound: 0, stopRequested: false });
 
