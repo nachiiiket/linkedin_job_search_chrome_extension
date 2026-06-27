@@ -188,6 +188,8 @@ If the page is reloaded while scraping, the extension saves the current phase, q
 
 ## Troubleshooting
 
+- **First run — extension not responding**: Refresh the LinkedIn page after adding the extension for the content script to initialize
+- **Preferences not saving in dashboard**: Refresh the dashboard page — it may need a reload on first startup
 - **Extension not responding**: Refresh the LinkedIn page and try again
 - **No results found**: Make sure you are signed in to LinkedIn
 - **Scraping stuck**: Click **Stop** and restart. Try reducing `Max Per Run`
