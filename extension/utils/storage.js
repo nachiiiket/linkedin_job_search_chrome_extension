@@ -20,7 +20,8 @@ const defaultPreferences = {
     "Founder", "Co-Founder", "CEO", "Director of Engineering"],
   searchMode: "jobs",
   jobsFirstPageOnly: true,
-  onlyWithEmail: false
+  onlyWithEmail: false,
+  scrapeSpeed: "normal"
 };
 
 const Storage = {
