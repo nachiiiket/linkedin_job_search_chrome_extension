@@ -23,7 +23,7 @@ const defaultPreferences = {
   onlyWithEmail: false,
   emailSubject: "",
   emailBody: "",
-  composeSpeed: 15000
+  composeSpeed: 150
 };
 
 const Storage = {

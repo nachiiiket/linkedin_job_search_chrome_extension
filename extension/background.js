@@ -45,7 +45,7 @@ async function composeInGmail(jobs, port) {
   const usingExistingTab = !!gmailTab && gmailTab.url.includes("mail.google.com/mail");
   let completed = 0;
   const total = emailJobs.length;
-  const speedLabel = prefs.composeSpeed >= 30000 ? 'Slow' : prefs.composeSpeed >= 15000 ? 'Fast' : prefs.composeSpeed >= 7000 ? 'Faster' : 'Fastest';
+  const speedLabel = prefs.composeSpeed >= 300 ? 'Slow' : prefs.composeSpeed >= 150 ? 'Fast' : prefs.composeSpeed >= 70 ? 'Faster' : 'Fastest';
   safePost(port, { action: 'composeProgress', type: 'start', total, message: `Starting compose for ${total} job(s)... (${speedLabel})` + (usingExistingTab ? ' using your Gmail tab' : '') });
 
   for (const job of emailJobs) {

@@ -41,7 +41,7 @@ function populateForm(p) {
   document.getElementById("dashSearchMode").value = p.searchMode || "jobs";
   document.getElementById("emailSubject").value = p.emailSubject || "";
   document.getElementById("emailBody").value = p.emailBody || "";
-  document.getElementById("composeSpeed").value = p.composeSpeed || 15000;
+  document.getElementById("composeSpeed").value = p.composeSpeed || 150;
 }
 
 function getPrefs() {
@@ -58,7 +58,7 @@ function getPrefs() {
     searchMode: document.getElementById("dashSearchMode").value,
     emailSubject: document.getElementById("emailSubject").value,
     emailBody: document.getElementById("emailBody").value,
-    composeSpeed: parseInt(document.getElementById("composeSpeed").value) || 15000,
+    composeSpeed: parseInt(document.getElementById("composeSpeed").value) || 150,
   };
 }
 
