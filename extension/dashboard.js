@@ -146,22 +146,17 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
 
   document.getElementById("btnAddDummyEmails").addEventListener("click", async () => {
+    const email = document.getElementById("dummyEmailInput").value.trim() || "test@example.com";
     const jobs = await Storage.getJobs();
-    let count = 0;
-    for (const j of jobs) {
-      if (!j.email || !j.email.trim()) {
-        j.email = "test@example.com";
-        count++;
-      }
-    }
+    for (const j of jobs) j.email = email;
     await chrome.storage.local.set({ jobs });
     allJobs = jobs;
     renderJobs(jobs);
     const st = await Storage.getStats();
     document.getElementById("dashWithEmail").textContent = st.withEmail;
     const ds = document.getElementById("dummyStatus");
-    ds.textContent = count ? `Added ${count} test email(s)` : "All jobs already have emails";
-    setTimeout(() => ds.textContent = "", 3000);
+    ds.textContent = `Set "${email}" on ${jobs.length} job(s)`;
+    setTimeout(() => ds.textContent = "", 4000);
   });
 });
 
