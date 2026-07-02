@@ -8,8 +8,8 @@
     <div class="status-row"><span class="label">Status</span><span id="statusText" class="status-idle">Idle</span></div>
     <div class="stats-row">
       <div class="stat"><span id="statTotal" class="stat-number">0</span><span class="stat-label">Found</span></div>
-      <div class="stat"><span id="statApplied" class="stat-number">0</span><span class="stat-label">Applied</span></div>
-      <div class="stat"><span id="statConnected" class="stat-number">0</span><span class="stat-label">Connected</span></div>
+      <div class="stat"><span id="statEmail" class="stat-number">0</span><span class="stat-label">Email</span></div>
+      <div class="stat"><span id="statComposed" class="stat-number">0</span><span class="stat-label">Sent</span></div>
     </div>
   </div>
   <div class="mode-select">
@@ -33,8 +33,21 @@
     <button id="btnStop" class="btn btn-danger" style="display:none">Stop</button>
     <button id="btnDashboard" class="btn btn-secondary">Dashboard</button>
   </div>
+  <hr class="popup-divider">
+  <div class="popup-compose">
+    <div class="compose-header">Email Compose</div>
+    <div class="compose-row">
+      <input type="email" id="popupDummyEmail" value="test@example.com" class="compose-input">
+      <button id="btnDummyEmails" class="btn btn-outline btn-xs">Set on all</button>
+    </div>
+    <div class="actions" style="padding:4px 0">
+      <button id="btnComposePopup" class="btn btn-primary" style="flex:1">Compose in Gmail</button>
+      <button id="btnAbortComposePopup" class="btn btn-danger" style="display:none;flex:1">Stop</button>
+    </div>
+    <div id="composeLogPopup" class="compose-log" style="max-height:80px"></div>
+  </div>
   <div class="log-section">
-    <div class="log-header">Log</div>
+    <div class="log-header">Scrape Log</div>
     <div id="logList" class="log-list"></div>
   </div>
 </div>

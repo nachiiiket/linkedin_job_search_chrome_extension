@@ -6,8 +6,8 @@ function connect() {
     if (m.action === "state") updateUI(m.state, m.stats);
     if (m.action === "started") setStatus("scraping");
     if (m.action === "stopped") setStatus("idle");
+    if (m.action === "composeProgress") handleComposeProgress(m);
   });
-  // fix: reconnect when service worker restarts (MV3 SW dies after ~5 min inactivity)
   port.onDisconnect.addListener(() => { port = null; setTimeout(connect, 1000); });
 }
 
@@ -15,8 +15,8 @@ function updateUI(state, stats) {
   document.getElementById("statusText").textContent = state.status === "scraping" ? "Scraping..." : "Idle";
   document.getElementById("statusText").className = state.status === "scraping" ? "status-scraping" : "status-idle";
   document.getElementById("statTotal").textContent = (stats || {}).total || 0;
-  document.getElementById("statApplied").textContent = (stats || {}).applied || 0;
-  document.getElementById("statConnected").textContent = (stats || {}).connected || 0;
+  document.getElementById("statEmail").textContent = (stats || {}).withEmail || 0;
+  document.getElementById("statComposed").textContent = (stats || {}).composed || 0;
   document.getElementById("btnStart").style.display = state.status === "scraping" ? "none" : "block";
   document.getElementById("btnStop").style.display = state.status === "scraping" ? "block" : "none";
   document.getElementById("searchMode").disabled = state.status === "scraping";
@@ -31,6 +31,29 @@ function setStatus(s) {
   document.getElementById("btnStart").style.display = s === "scraping" ? "none" : "block";
   document.getElementById("btnStop").style.display = s === "scraping" ? "block" : "none";
   document.getElementById("searchMode").disabled = s === "scraping";
+}
+
+function handleComposeProgress(msg) {
+  const log = document.getElementById("composeLogPopup");
+  const entry = document.createElement("div");
+  entry.className = "log-entry";
+  if (msg.type === "start") {
+    entry.classList.add("log-info");
+    entry.textContent = msg.message;
+    log.appendChild(entry);
+  } else if (msg.type === "progress") {
+    entry.classList.add("log-active");
+    entry.textContent = `[${msg.completed + 1}/${msg.total}] ${msg.current}`;
+    log.appendChild(entry);
+  } else {
+    document.getElementById("btnComposePopup").style.display = "flex";
+    document.getElementById("btnAbortComposePopup").style.display = "none";
+    entry.classList.add(msg.type === "done" ? "log-success" : "log-warn");
+    entry.textContent = msg.message;
+    log.appendChild(entry);
+    Storage.getStats().then(st => document.getElementById("statComposed").textContent = st.composed || 0);
+  }
+  log.scrollTop = log.scrollHeight;
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -60,13 +83,39 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("btnDashboard").addEventListener("click", () => {
     chrome.tabs.create({ url: "dashboard.html" });
   });
+
+  document.getElementById("btnDummyEmails").addEventListener("click", async () => {
+    const email = document.getElementById("popupDummyEmail").value.trim() || "test@example.com";
+    const jobs = await Storage.getJobs();
+    for (const j of jobs) j.email = email;
+    await chrome.storage.local.set({ jobs });
+    const st = await Storage.getStats();
+    document.getElementById("statEmail").textContent = st.withEmail;
+  });
+
+  document.getElementById("btnComposePopup").addEventListener("click", async () => {
+    const jobs = await Storage.getJobs();
+    const emailJobs = jobs.filter(j => j.email && j.email.trim() && j.composed !== "Yes");
+    if (emailJobs.length === 0) {
+      document.getElementById("composeLogPopup").innerHTML = '<div class="log-entry log-info">No new jobs with email to compose.</div>';
+      return;
+    }
+    document.getElementById("btnComposePopup").style.display = "none";
+    document.getElementById("btnAbortComposePopup").style.display = "flex";
+    document.getElementById("composeLogPopup").innerHTML = '';
+    if (port) port.postMessage({ action: "composeInGmail", jobs });
+  });
+
+  document.getElementById("btnAbortComposePopup").addEventListener("click", () => {
+    if (port) port.postMessage({ action: "abortCompose" });
+  });
 });
 
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.action === "statsUpdate") {
     document.getElementById("statTotal").textContent = msg.stats.total;
-    document.getElementById("statApplied").textContent = msg.stats.applied;
-    document.getElementById("statConnected").textContent = msg.stats.connected;
+    document.getElementById("statEmail").textContent = msg.stats.withEmail;
+    document.getElementById("statComposed").textContent = msg.stats.composed;
     chrome.action.setBadgeText({ text: String(msg.stats.total) });
   }
   if (msg.action === "scrapingComplete") setStatus("idle");
