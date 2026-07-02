@@ -37,7 +37,7 @@ function populateForm(p) {
   document.getElementById("onlyWithEmail").checked = p.onlyWithEmail === true;
   document.getElementById("postedWithinDays").value = p.postedWithinDays || 1;
   document.getElementById("maxJobsPerRun").value = p.maxJobsPerRun || 50;
-  document.getElementById("scrapeSpeed").value = p.scrapeSpeed || 1;
+  document.getElementById("scrapeSpeed").value = p.scrapeSpeed || "normal";
   // fix: restore searchMode from saved prefs
   document.getElementById("dashSearchMode").value = p.searchMode || "jobs";
   document.getElementById("emailSubject").value = p.emailSubject || "";
@@ -56,7 +56,7 @@ function getPrefs() {
     postedWithinDays: parseInt(document.getElementById("postedWithinDays").value) || 1,
     maxJobsPerRun: parseInt(document.getElementById("maxJobsPerRun").value) || 50,
     targetPosterTitles: [], excludedKeywords: [],
-    scrapeSpeed: parseFloat(document.getElementById("scrapeSpeed").value) || 1,
+    scrapeSpeed: document.getElementById("scrapeSpeed").value,
     searchMode: document.getElementById("dashSearchMode").value,
     emailSubject: document.getElementById("emailSubject").value,
     emailBody: document.getElementById("emailBody").value,

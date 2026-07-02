@@ -1,7 +1,10 @@
 let shouldStop = false;
-let scrapeSpeedMultiplier = 1;
+let _speedFactor = 1;
 
-function rand(lo, hi) { return new Promise(r => setTimeout(r, (lo + Math.random() * (hi - lo)) * scrapeSpeedMultiplier)); }
+function rand(lo, hi) {
+  const delay = (lo + Math.random() * (hi - lo)) * _speedFactor;
+  return new Promise(r => setTimeout(r, delay));
+}
 function closeMenu() { document.body.click(); document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })); }
 function send(a, d) { try { chrome.runtime.sendMessage({ action: a, ...(d || {}) }, () => {}); } catch (e) {} }
 
@@ -587,6 +590,10 @@ async function runPhase(cfg, phase, startIdx) {
 // doesn't immediately abort a fresh start
 async function runAll(cfg) {
   shouldStop = false;
+  const speed = cfg.scrapeSpeed || "normal";
+  if (speed === "fast") _speedFactor = 0.35;
+  else if (speed === "max") _speedFactor = 0;
+  else _speedFactor = 1;
   const mode = cfg.searchMode || "jobs";
   await Storage.setState({ status: "scraping", mode, totalFound: 0, stopRequested: false });
 
@@ -617,7 +624,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === "startScraping") {
     sendResponse({ ok: true });
     shouldStop = false;
-    scrapeSpeedMultiplier = msg.config.scrapeSpeed || 1;
     // clear stale activeScrapeConfig so fresh start never resumes an old session
     chrome.storage.local.remove("activeScrapeConfig").then(() =>
       runAll(msg.config || {}).catch(e => send("log", { text: "Error: " + e.message }))
@@ -635,7 +641,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (await checkStop()) { await chrome.storage.local.remove("activeScrapeConfig"); await Storage.setState({ stopRequested: false, status: "idle" }); return; }
   const isOnSearch = window.location.href.includes("/jobs/search") || window.location.href.includes("/search/results/content");
   if (isOnSearch) {
-    scrapeSpeedMultiplier = sc.config.scrapeSpeed || 1;
     await rand(500, 1000);
     send("log", { text: "Resuming scrape session..." });
     await runAll(sc.config);

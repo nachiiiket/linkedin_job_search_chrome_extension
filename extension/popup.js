@@ -68,14 +68,14 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("searchMode").value = prefs.searchMode || "jobs";
   document.getElementById("popupCompanies").value = (prefs.targetCompanies || []).join(", ");
   document.getElementById("popupSpeed").value = prefs.composeSpeed || 150;
-  document.getElementById("popupScrapeSpeed").value = prefs.scrapeSpeed || 1;
+  document.getElementById("scrapeSpeed").value = prefs.scrapeSpeed || "normal";
 
   document.getElementById("btnStart").addEventListener("click", async () => {
     prefs.searchMode = document.getElementById("searchMode").value;
     prefs.onlyWithEmail = document.getElementById("onlyWithEmail").checked;
     prefs.jobsFirstPageOnly = document.getElementById("jobsFirstPageOnly").checked;
     prefs.targetCompanies = document.getElementById("popupCompanies").value.split(",").map(s => s.trim()).filter(Boolean);
-    prefs.scrapeSpeed = parseFloat(document.getElementById("popupScrapeSpeed").value) || 1;
+    prefs.scrapeSpeed = document.getElementById("scrapeSpeed").value;
     await Storage.savePreferences(prefs);
     await Storage.setState({ stopRequested: false });
     if (port) port.postMessage({ action: "startScraping", config: prefs });
