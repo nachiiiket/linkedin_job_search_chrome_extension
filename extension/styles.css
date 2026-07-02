@@ -104,7 +104,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .email-section .form-group label { display: block; font-size: 11px; font-weight: 600; color: #555; margin-bottom: 3px; }
 .email-section .form-group input[type="text"], .email-section .form-group textarea { width: 100%; padding: 6px 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 12px; font-family: inherit; }
 .email-section .form-group input[type="text"]:focus, .email-section .form-group textarea:focus { outline: none; border-color: #0a66c2; }
-.template-hints { font-size: 10px; color: #999; margin-top: 2px; }
+.speed-select { width: 100%; padding: 6px 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 12px; font-family: inherit; }
 .compose-log { margin-top: 8px; max-height: 120px; overflow-y: auto; font-size: 11px; }
 .compose-log .log-entry { padding: 3px 6px; border-radius: 4px; margin-bottom: 2px; }
 .compose-log .log-info { background: #e8f0fe; color: #1a56db; }

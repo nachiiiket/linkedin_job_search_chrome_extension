@@ -21,9 +21,9 @@ const defaultPreferences = {
   searchMode: "jobs",
   jobsFirstPageOnly: true,
   onlyWithEmail: false,
-  emailSubject: "Excited about the {position} opportunity at {company}",
-  emailBody: "Hi {name},\n\nI came across your post about the {position} position at {company} and I'm very interested in learning more about this opportunity.\n\nI would love to connect and discuss how my skills and experience align with what you're looking for.\n\nBest regards,\n{your_name}",
-  yourName: ""
+  emailSubject: "",
+  emailBody: "",
+  composeSpeed: 15000
 };
 
 const Storage = {

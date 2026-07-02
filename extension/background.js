@@ -34,6 +34,7 @@ async function composeInGmail(jobs, port) {
   composeAbort = false;
   const prefs = await Storage.getPreferences();
   const emailJobs = jobs.filter(j => j.email && j.email.trim() && j.composed !== "Yes");
+  const speed = Number(prefs.composeSpeed) || 15000;
 
   if (emailJobs.length === 0) {
     safePost(port, { action: 'composeProgress', type: 'done', message: 'No new jobs with email to compose.' });
@@ -44,7 +45,8 @@ async function composeInGmail(jobs, port) {
   const usingExistingTab = !!gmailTab && gmailTab.url.includes("mail.google.com/mail");
   let completed = 0;
   const total = emailJobs.length;
-  safePost(port, { action: 'composeProgress', type: 'start', total, message: `Starting compose for ${total} job(s)...` + (usingExistingTab ? ' (using your Gmail tab)' : '') });
+  const speedLabel = prefs.composeSpeed >= 30000 ? 'Slow' : prefs.composeSpeed >= 15000 ? 'Fast' : prefs.composeSpeed >= 7000 ? 'Faster' : 'Fastest';
+  safePost(port, { action: 'composeProgress', type: 'start', total, message: `Starting compose for ${total} job(s)... (${speedLabel})` + (usingExistingTab ? ' using your Gmail tab' : '') });
 
   for (const job of emailJobs) {
     if (composeAbort) {
@@ -53,17 +55,10 @@ async function composeInGmail(jobs, port) {
     }
 
     const to = job.email.split('\n')[0].trim();
-    const vars = {
-      name: job.poster_name || 'there',
-      position: job.position || 'the position',
-      company: job.company || 'your company',
-      your_name: prefs.yourName || 'there',
-    };
+    const subject = prefs.emailSubject || '';
+    const body = prefs.emailBody || '';
 
-    const subject = fillTemplate(prefs.emailSubject || "Excited about the {position} opportunity at {company}", vars);
-    const body = fillTemplate(prefs.emailBody || "Hi {name},\n\nI'm interested in {position} at {company}.\n\nBest,\n{your_name}", vars);
-
-    safePost(port, { action: 'composeProgress', type: 'progress', completed, total, current: job.poster_name || to, subject });
+    safePost(port, { action: 'composeProgress', type: 'progress', completed, total, current: to, subject });
 
     if (usingExistingTab) {
       try {
@@ -72,7 +67,7 @@ async function composeInGmail(jobs, port) {
         await chrome.tabs.update(gmailTab.id, { url: `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(to)}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}` });
         gmailTab.url = "https://mail.google.com/mail/";
       }
-      await new Promise(r => setTimeout(r, 3000 + Math.random() * 4000));
+      await new Promise(r => setTimeout(r, Math.min(speed, 2000)));
     } else {
       const composeUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(to)}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
       const tab = await chrome.tabs.create({ url: composeUrl, active: true });
@@ -90,9 +85,8 @@ async function composeInGmail(jobs, port) {
     await Storage.markComposed(job.job_id);
     completed++;
 
-    if (completed < total) {
-      const delay = 5000 + Math.random() * 10000;
-      await new Promise(r => setTimeout(r, delay));
+    if (completed < total && speed > 0) {
+      await new Promise(r => setTimeout(r, speed));
     }
   }
 

@@ -67,6 +67,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("jobsFirstPageOnly").checked = prefs.jobsFirstPageOnly !== false;
   document.getElementById("searchMode").value = prefs.searchMode || "jobs";
   document.getElementById("popupCompanies").value = (prefs.targetCompanies || []).join(", ");
+  document.getElementById("popupSpeed").value = prefs.composeSpeed || 15000;
 
   document.getElementById("btnStart").addEventListener("click", async () => {
     prefs.searchMode = document.getElementById("searchMode").value;
@@ -94,6 +95,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
 
   document.getElementById("btnComposePopup").addEventListener("click", async () => {
+    const prefs2 = await Storage.getPreferences();
+    prefs2.composeSpeed = parseInt(document.getElementById("popupSpeed").value) || 15000;
+    await Storage.savePreferences(prefs2);
     const jobs = await Storage.getJobs();
     const emailJobs = jobs.filter(j => j.email && j.email.trim() && j.composed !== "Yes");
     if (emailJobs.length === 0) {
