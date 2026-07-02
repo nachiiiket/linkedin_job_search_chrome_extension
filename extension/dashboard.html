@@ -60,6 +60,16 @@
         </div>
         <button id="btnSaveEmailPrefs" class="btn btn-primary">Save</button><span id="emailSaveStatus" class="save-status"></span>
         <hr style="margin:16px 0;border:none;border-top:1px solid #e0e0e0">
+        <div class="email-test-section">
+          <div class="form-group"><label>Test Email (send a sample to verify setup)</label>
+            <div class="test-email-row">
+              <input type="email" id="testEmail" placeholder="you@gmail.com" style="flex:1">
+              <button id="btnSendTest" class="btn btn-secondary" style="white-space:nowrap">Send Test</button>
+            </div>
+          </div>
+          <div id="testResult" class="test-result"></div>
+        </div>
+        <hr style="margin:16px 0;border:none;border-top:1px solid #e0e0e0">
         <div class="email-send-section">
           <button id="btnSendEmails" class="btn btn-primary" style="width:100%;margin-bottom:6px">Send Emails Now</button>
           <button id="btnStopSending" class="btn btn-danger" style="display:none;width:100%;margin-bottom:6px">Stop Sending</button>

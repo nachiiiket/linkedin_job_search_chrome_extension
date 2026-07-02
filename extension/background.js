@@ -85,6 +85,7 @@ chrome.runtime.onConnect.addListener(port => {
       if (msg.action === "savePreferences") { await Storage.savePreferences(msg.prefs); port.postMessage({ action: "preferencesSaved" }); }
       if (msg.action === "startEmailSending") { emailSendingStop = false; sendEmailsGmail(port); }
       if (msg.action === "stopEmailSending") { emailSendingStop = true; }
+      if (msg.action === "sendTestEmail") { sendTestEmailGmail(port, msg.testEmail); }
     });
   }
 });
@@ -212,5 +213,31 @@ async function sendEmailsGmail(port) {
   } catch (e) {
     port.postMessage({ action: "emailLog", text: "ERROR: " + e.message });
     port.postMessage({ action: "emailComplete", sent: 0, failed: 1, total: 1 });
+  }
+}
+
+async function sendTestEmailGmail(port, testEmail) {
+  try {
+    const prefs = await Storage.getEmailPrefs();
+    const resumeData = await Storage.getResumeData();
+    const sampleRecipient = {
+      poster_name: "Sample Recruiter",
+      position: "AI/ML Engineer",
+      company: "Example Corp"
+    };
+    const subject = fillTemplate(prefs.emailSubject, sampleRecipient, prefs.yourName) + " [TEST]";
+    const body = fillTemplate(prefs.emailBody, sampleRecipient, prefs.yourName) + "\n\n---\nThis is a test email from LinkedIn Job Finder.";
+    const raw = buildMime(prefs.senderEmail, testEmail, subject, body, resumeData);
+
+    port.postMessage({ action: "emailLog", text: "Requesting Gmail authorization..." });
+    const authResult = await chrome.identity.getAuthToken({ interactive: true });
+    port.postMessage({ action: "emailLog", text: "Sending test email to " + testEmail + "..." });
+    await sendViaGmailApi(authResult.token, raw);
+    port.postMessage({ action: "emailLog", text: "Test email sent to " + testEmail });
+    port.postMessage({ action: "emailTestResult", success: true });
+    notify("Test Email Sent", "Test email delivered to " + testEmail);
+  } catch (e) {
+    port.postMessage({ action: "emailLog", text: "Test failed: " + e.message });
+    port.postMessage({ action: "emailTestResult", success: false, error: e.message });
   }
 }

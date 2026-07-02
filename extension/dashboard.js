@@ -14,6 +14,7 @@ function handle(msg) {
   if (msg.action === "emailProgress") updateEmailProgress(msg);
   if (msg.action === "emailComplete") { finishEmailSending(msg); }
   if (msg.action === "emailLog") { addSendLog(msg.text); }
+  if (msg.action === "emailTestResult") { showTestResult(msg); }
 }
 
 function updateState(state, stats) {
@@ -57,6 +58,16 @@ function addSendLog(text) {
   log.appendChild(d); log.scrollTop = log.scrollHeight;
 }
 
+function showTestResult(msg) {
+  const el = document.getElementById("testResult");
+  el.style.display = "block";
+  el.className = "test-result " + (msg.success ? "test-success" : "test-fail");
+  el.textContent = msg.success ? "Test sent successfully!" : "Failed: " + msg.error;
+  if (msg.success) setTimeout(() => { el.style.display = "none"; }, 4000);
+  document.getElementById("btnSendTest").disabled = false;
+  document.getElementById("btnSendTest").textContent = "Send Test";
+}
+
 function populateForm(p) {
   document.getElementById("jobRoles").value = (p.jobRoles || []).join("\n");
   document.getElementById("locations").value = (p.locations || []).join("\n");
@@ -72,6 +83,7 @@ function populateForm(p) {
 
 function populateEmailForm(p) {
   document.getElementById("senderEmail").value = p.senderEmail || "";
+  document.getElementById("testEmail").value = p.testEmail || "";
   document.getElementById("yourName").value = p.yourName || "";
   document.getElementById("emailSubject").value = p.emailSubject || "";
   document.getElementById("emailBody").value = p.emailBody || "";
@@ -85,6 +97,7 @@ function populateEmailForm(p) {
 function getEmailPrefs() {
   return {
     senderEmail: document.getElementById("senderEmail").value.trim(),
+    testEmail: document.getElementById("testEmail").value.trim(),
     yourName: document.getElementById("yourName").value.trim(),
     emailSubject: document.getElementById("emailSubject").value.trim(),
     emailBody: document.getElementById("emailBody").value,
@@ -235,5 +248,16 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   document.getElementById("btnStopSending").addEventListener("click", () => {
     if (port) port.postMessage({ action: "stopEmailSending" });
+  });
+
+  document.getElementById("btnSendTest").addEventListener("click", async () => {
+    const prefs = await Storage.getEmailPrefs();
+    if (!prefs.senderEmail) { alert("Please configure sender email first."); return; }
+    const testTo = document.getElementById("testEmail").value.trim();
+    if (!testTo) { alert("Enter a test email address."); return; }
+    document.getElementById("btnSendTest").disabled = true;
+    document.getElementById("btnSendTest").textContent = "Sending...";
+    document.getElementById("testResult").style.display = "none";
+    if (port) port.postMessage({ action: "sendTestEmail", testEmail: testTo });
   });
 });

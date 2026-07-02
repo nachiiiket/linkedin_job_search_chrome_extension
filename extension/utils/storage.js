@@ -23,6 +23,7 @@ const defaultPreferences = {
   onlyWithEmail: false,
   scrapeSpeed: "normal",
   senderEmail: "",
+  testEmail: "",
   emailSubject: "Application for {position} at {company}",
   emailBody: "Hi {name},\n\nI'm reaching out regarding the {position} role at {company}. I have relevant experience in this domain.\n\nResume attached. Happy to connect.\n\nBest,\n{your_name}",
   yourName: "",
@@ -119,6 +120,7 @@ const Storage = {
     const prefs = await this.getPreferences();
     return {
       senderEmail: prefs.senderEmail || "",
+      testEmail: prefs.testEmail || "",
       emailSubject: prefs.emailSubject || "Application for {position} at {company}",
       emailBody: prefs.emailBody || "Hi {name},\n\nI'm reaching out regarding the {position} role at {company}.",
       yourName: prefs.yourName || "",
