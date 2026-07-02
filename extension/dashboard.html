@@ -38,6 +38,14 @@
           <div class="form-group half"><label><input type="checkbox" id="onlyWithEmail"> Only save with email</label></div>
         </div>
         <div class="form-group"><label>Max per run</label><input type="number" id="maxJobsPerRun" min="1" max="200" value="50"></div>
+        <div class="form-group"><label>Scrape Speed</label>
+          <select id="scrapeSpeed" class="speed-select">
+            <option value="3">Slow (3x delay)</option>
+            <option value="1" selected>Normal</option>
+            <option value="0.5">Fast (half delay)</option>
+            <option value="0.25">Fastest (quarter delay)</option>
+          </select>
+        </div>
           <button id="btnSavePrefs" class="btn btn-primary">Save</button><span id="saveStatus" class="save-status"></span>
 
           <hr class="sidebar-divider">

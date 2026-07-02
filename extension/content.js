@@ -1,6 +1,7 @@
 let shouldStop = false;
+let scrapeSpeedMultiplier = 1;
 
-function rand(lo, hi) { return new Promise(r => setTimeout(r, lo + Math.random() * (hi - lo))); }
+function rand(lo, hi) { return new Promise(r => setTimeout(r, (lo + Math.random() * (hi - lo)) * scrapeSpeedMultiplier)); }
 function closeMenu() { document.body.click(); document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })); }
 function send(a, d) { try { chrome.runtime.sendMessage({ action: a, ...(d || {}) }, () => {}); } catch (e) {} }
 
@@ -616,6 +617,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === "startScraping") {
     sendResponse({ ok: true });
     shouldStop = false;
+    scrapeSpeedMultiplier = msg.config.scrapeSpeed || 1;
     // clear stale activeScrapeConfig so fresh start never resumes an old session
     chrome.storage.local.remove("activeScrapeConfig").then(() =>
       runAll(msg.config || {}).catch(e => send("log", { text: "Error: " + e.message }))
@@ -633,6 +635,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (await checkStop()) { await chrome.storage.local.remove("activeScrapeConfig"); await Storage.setState({ stopRequested: false, status: "idle" }); return; }
   const isOnSearch = window.location.href.includes("/jobs/search") || window.location.href.includes("/search/results/content");
   if (isOnSearch) {
+    scrapeSpeedMultiplier = sc.config.scrapeSpeed || 1;
     await rand(500, 1000);
     send("log", { text: "Resuming scrape session..." });
     await runAll(sc.config);

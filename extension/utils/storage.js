@@ -21,6 +21,7 @@ const defaultPreferences = {
   searchMode: "jobs",
   jobsFirstPageOnly: true,
   onlyWithEmail: false,
+  scrapeSpeed: 1,
   emailSubject: "",
   emailBody: "",
   composeSpeed: 150
