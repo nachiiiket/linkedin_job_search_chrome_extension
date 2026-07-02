@@ -34,7 +34,7 @@ async function composeInGmail(jobs, port) {
   composeAbort = false;
   const prefs = await Storage.getPreferences();
   const emailJobs = jobs.filter(j => j.email && j.email.trim() && j.composed !== "Yes");
-  const speed = Number(prefs.composeSpeed) || 15000;
+  const speed = Number(prefs.composeSpeed) || 150;
 
   if (emailJobs.length === 0) {
     safePost(port, { action: 'composeProgress', type: 'done', message: 'No new jobs with email to compose.' });
