@@ -106,7 +106,7 @@ function extractJob(jid) {
     job_id: jid, date_found: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }),
     position: "", company: "", location: "", poster_name: "", poster_title: "", poster_profile_url: "",
     job_url: "https://www.linkedin.com/jobs/view/" + jid + "/",
-    email: "", applied: "No", connection_sent: "No", notes: "", full_post: "", source: "jobs"
+    email: "", applied: "No", connection_sent: "No", composed: "No", notes: "", full_post: "", source: "jobs"
   };
   try { const e = document.querySelector(".jobs-unified-top-card__job-title h1, .t-24.t-bold.jobs-unified-top-card__job-title"); if (e) d.position = e.innerText.trim(); } catch(e) {}
   try { const e = document.querySelector(".jobs-unified-top-card__company-name a, .jobs-unified-top-card__company-name"); if (e) d.company = e.innerText.trim(); } catch(e) {}
@@ -449,7 +449,7 @@ async function scrapePosts(cfg) {
           date_found: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }),
           position: "", company: "", location: cfg.locations?.[0] || "",
           poster_name: "", poster_title: "", poster_profile_url: "", job_url: window.location.href.split("?")[0],
-          email: (allEmails.emails || []).join(", "), applied: "No", connection_sent: "No",
+          email: (allEmails.emails || []).join(", "), applied: "No", connection_sent: "No", composed: "No",
           notes: "", full_post: pageText.slice(0, 2000), source: "posts"
         };
         const saved = await Storage.saveJob(basic);
@@ -507,7 +507,7 @@ async function scrapePosts(cfg) {
             position: "", company: poster.poster_name || "", location: meta.dateText || "",
             poster_name: poster.poster_name || "", poster_title: poster.poster_title || "",
             poster_profile_url: poster.poster_profile_url || "", job_url: postUrl,
-            email: "", applied: "No", connection_sent: "No", notes: "", full_post: cleanText.slice(0, 2000), source: "posts"
+            email: "", applied: "No", connection_sent: "No", composed: "No", notes: "", full_post: cleanText.slice(0, 2000), source: "posts"
           };
           const saved = await Storage.saveJob(basic);
           if (saved) { found++; newOnPage++; send("jobFound", { job: basic }); send("log", { text: "Saved (no email): " + (poster.poster_name || "unknown poster") }); }

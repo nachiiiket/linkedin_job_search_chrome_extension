@@ -1,7 +1,7 @@
 const COLUMNS = [
   "job_id", "date_found", "position", "company", "location",
   "poster_name", "poster_title", "poster_profile_url",
-  "job_url", "email", "applied", "connection_sent", "notes", "full_post"
+  "job_url", "email", "applied", "connection_sent", "composed", "notes", "full_post"
 ];
 
 const defaultPreferences = {
@@ -20,7 +20,10 @@ const defaultPreferences = {
     "Founder", "Co-Founder", "CEO", "Director of Engineering"],
   searchMode: "jobs",
   jobsFirstPageOnly: true,
-  onlyWithEmail: false
+  onlyWithEmail: false,
+  emailSubject: "Excited about the {position} opportunity at {company}",
+  emailBody: "Hi {name},\n\nI came across your post about the {position} position at {company} and I'm very interested in learning more about this opportunity.\n\nI would love to connect and discuss how my skills and experience align with what you're looking for.\n\nBest regards,\n{your_name}",
+  yourName: ""
 };
 
 const Storage = {
@@ -43,6 +46,7 @@ const Storage = {
     if (!row.date_found) row.date_found = new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
     if (!row.applied) row.applied = "No";
     if (!row.connection_sent) row.connection_sent = "No";
+    if (!row.composed) row.composed = "No";
     jobs.push(row);
     await chrome.storage.local.set({ jobs });
     return true;
@@ -50,7 +54,16 @@ const Storage = {
 
   async getStats() {
     const jobs = await this.getJobs();
-    return { total: jobs.length, withEmail: jobs.filter(j => j.email).length, applied: jobs.filter(j => j.applied === "Yes").length, connected: jobs.filter(j => j.connection_sent === "Yes").length };
+    return { total: jobs.length, withEmail: jobs.filter(j => j.email).length, applied: jobs.filter(j => j.applied === "Yes").length, connected: jobs.filter(j => j.connection_sent === "Yes").length, composed: jobs.filter(j => j.composed === "Yes").length };
+  },
+
+  async markComposed(jobId) {
+    const jobs = await this.getJobs();
+    const idx = jobs.findIndex(j => j.job_id === jobId);
+    if (idx === -1) return false;
+    jobs[idx].composed = "Yes";
+    await chrome.storage.local.set({ jobs });
+    return true;
   },
 
   async getPreferences() {

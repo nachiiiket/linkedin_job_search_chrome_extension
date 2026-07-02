@@ -96,3 +96,19 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 /* Checkbox rows in popup */
 .mode-select label { font-size: 12px; color: #555; display: flex; align-items: center; gap: 4px; white-space: nowrap; }
 .mode-select input[type="checkbox"] { margin: 0; }
+
+/* Email compose section */
+.sidebar-divider { border: none; border-top: 1px solid #e0e0e0; margin: 16px 0; }
+.email-section h3 { font-size: 13px; font-weight: 700; color: #333; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+.email-section .form-group { margin-bottom: 10px; }
+.email-section .form-group label { display: block; font-size: 11px; font-weight: 600; color: #555; margin-bottom: 3px; }
+.email-section .form-group input[type="text"], .email-section .form-group textarea { width: 100%; padding: 6px 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 12px; font-family: inherit; }
+.email-section .form-group input[type="text"]:focus, .email-section .form-group textarea:focus { outline: none; border-color: #0a66c2; }
+.template-hints { font-size: 10px; color: #999; margin-top: 2px; }
+.compose-log { margin-top: 8px; max-height: 120px; overflow-y: auto; font-size: 11px; }
+.compose-log .log-entry { padding: 3px 6px; border-radius: 4px; margin-bottom: 2px; }
+.compose-log .log-info { background: #e8f0fe; color: #1a56db; }
+.compose-log .log-active { background: #fef7e0; color: #b8860b; }
+.compose-log .log-success { background: #e6f4ea; color: #1e7e34; }
+.compose-log .log-warn { background: #fce8e6; color: #c5221f; }
+.composed-cell { text-align: center; font-size: 14px; color: #1e7e34; width: 36px; min-width: 36px; }

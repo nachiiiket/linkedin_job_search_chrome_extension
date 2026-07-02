@@ -7,6 +7,7 @@ function handle(msg) {
   if (msg.action === "preferences") populateForm(msg.prefs);
   if (msg.action === "preferencesSaved") { document.getElementById("saveStatus").textContent = "Saved!"; setTimeout(() => document.getElementById("saveStatus").textContent = "", 2000); }
   if (msg.action === "cleared") { allJobs = []; renderJobs([]); updateState({ status: "idle" }, { total: 0, applied: 0, connected: 0 }); }
+  if (msg.action === "composeProgress") handleComposeProgress(msg);
 }
 
 function updateState(state, stats) {
@@ -22,6 +23,7 @@ function updateState(state, stats) {
     document.getElementById("dashWithEmail").textContent = stats.withEmail || 0;
     document.getElementById("dashApplied").textContent = stats.applied;
     document.getElementById("dashConnected").textContent = stats.connected;
+    document.getElementById("dashComposed").textContent = stats.composed || 0;
     chrome.action.setBadgeText({ text: String(stats.total) });
   }
 }
@@ -37,6 +39,9 @@ function populateForm(p) {
   document.getElementById("maxJobsPerRun").value = p.maxJobsPerRun || 50;
   // fix: restore searchMode from saved prefs
   document.getElementById("dashSearchMode").value = p.searchMode || "jobs";
+  document.getElementById("emailSubject").value = p.emailSubject || "";
+  document.getElementById("emailBody").value = p.emailBody || "";
+  document.getElementById("yourName").value = p.yourName || "";
 }
 
 function getPrefs() {
@@ -51,6 +56,9 @@ function getPrefs() {
     maxJobsPerRun: parseInt(document.getElementById("maxJobsPerRun").value) || 50,
     targetPosterTitles: [], excludedKeywords: [],
     searchMode: document.getElementById("dashSearchMode").value,
+    emailSubject: document.getElementById("emailSubject").value,
+    emailBody: document.getElementById("emailBody").value,
+    yourName: document.getElementById("yourName").value,
   };
 }
 
@@ -65,10 +73,12 @@ function renderJobs(jobs) {
       j.position, j.company, j.location,
       j.poster_name ? j.poster_name + (j.poster_title ? " - " + j.poster_title : "") : "-",
       j.email || "-",
+      j.composed === "Yes" ? "✓" : "",
     ];
     cells.forEach((t, i) => {
       const td = document.createElement("td"); td.textContent = t || "-"; td.title = t || "";
       if (i === 4) td.className = "email-cell";
+      if (i === 5) { td.className = "composed-cell"; td.textContent = t || ""; }
       tr.appendChild(td);
     });
     const urlTd = document.createElement("td");
@@ -115,4 +125,56 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("tabAll").addEventListener("click", () => switchTab("tabAll"));
   document.getElementById("tabWithEmail").addEventListener("click", () => switchTab("tabWithEmail"));
   document.getElementById("tabWithoutEmail").addEventListener("click", () => switchTab("tabWithoutEmail"));
+
+  document.getElementById("btnComposeInGmail").addEventListener("click", async () => {
+    const prefs = getPrefs();
+    if (port) port.postMessage({ action: "savePreferences", prefs });
+    const jobs = await Storage.getJobs();
+    const emailJobs = jobs.filter(j => j.email && j.email.trim() && j.composed !== "Yes");
+    if (emailJobs.length === 0) {
+      document.getElementById("composeLog").innerHTML = '<div class="log-entry log-info">No new jobs with email to compose.</div>';
+      return;
+    }
+    document.getElementById("btnComposeInGmail").style.display = "none";
+    document.getElementById("btnAbortCompose").style.display = "inline-block";
+    document.getElementById("composeLog").innerHTML = '';
+    if (port) port.postMessage({ action: "composeInGmail", jobs });
+  });
+
+  document.getElementById("btnAbortCompose").addEventListener("click", () => {
+    if (port) port.postMessage({ action: "abortCompose" });
+  });
 });
+
+function handleComposeProgress(msg) {
+  const log = document.getElementById("composeLog");
+  const entry = document.createElement("div");
+  entry.className = "log-entry";
+
+  if (msg.type === "start") {
+    entry.classList.add("log-info");
+    entry.textContent = msg.message;
+    log.appendChild(entry);
+  } else if (msg.type === "progress") {
+    entry.classList.add("log-active");
+    entry.textContent = `[${msg.completed + 1}/${msg.total}] ${msg.current} — ${msg.subject || ''}`;
+    log.appendChild(entry);
+  } else if (msg.type === "done") {
+    document.getElementById("btnComposeInGmail").style.display = "inline-block";
+    document.getElementById("btnAbortCompose").style.display = "none";
+    entry.classList.add("log-success");
+    entry.textContent = msg.message;
+    log.appendChild(entry);
+    Storage.getJobs().then(j => { allJobs = j; renderJobs(j); });
+    Storage.getStats().then(st => {
+      document.getElementById("dashComposed").textContent = st.composed || 0;
+    });
+  } else if (msg.type === "abort") {
+    document.getElementById("btnComposeInGmail").style.display = "inline-block";
+    document.getElementById("btnAbortCompose").style.display = "none";
+    entry.classList.add("log-warn");
+    entry.textContent = msg.message;
+    log.appendChild(entry);
+  }
+  log.scrollTop = log.scrollHeight;
+}

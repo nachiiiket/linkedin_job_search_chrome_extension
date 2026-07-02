@@ -38,9 +38,29 @@
           <div class="form-group half"><label><input type="checkbox" id="onlyWithEmail"> Only save with email</label></div>
         </div>
         <div class="form-group"><label>Max per run</label><input type="number" id="maxJobsPerRun" min="1" max="200" value="50"></div>
-        <button id="btnSavePrefs" class="btn btn-primary">Save</button><span id="saveStatus" class="save-status"></span>
-      </div>
-    </aside>
+          <button id="btnSavePrefs" class="btn btn-primary">Save</button><span id="saveStatus" class="save-status"></span>
+
+          <hr class="sidebar-divider">
+          <div class="email-section">
+            <h3>Email Compose</h3>
+            <div class="form-group"><label>Subject template</label>
+              <input type="text" id="emailSubject" placeholder="Excited about {position} at {company}">
+              <div class="template-hints">{name}, {position}, {company}, {your_name}</div>
+            </div>
+            <div class="form-group"><label>Body template</label>
+              <textarea id="emailBody" rows="5" placeholder="Hi {name},..."></textarea>
+            </div>
+            <div class="form-group"><label>Your Name</label>
+              <input type="text" id="yourName" placeholder="Your full name">
+            </div>
+            <div class="form-row">
+              <button id="btnComposeInGmail" class="btn btn-primary">Compose in Gmail</button>
+              <button id="btnAbortCompose" class="btn btn-danger" style="display:none">Stop</button>
+            </div>
+            <div id="composeLog" class="compose-log"></div>
+          </div>
+        </div>
+      </aside>
 
     <button id="btnExpandSidebar" class="sidebar-expand-btn" title="Show preferences">▶</button>
 
@@ -51,6 +71,7 @@
           <div class="stat"><span id="dashWithEmail" class="stat-number">0</span> With Email</div>
           <div class="stat"><span id="dashApplied" class="stat-number">0</span> Applied</div>
           <div class="stat"><span id="dashConnected" class="stat-number">0</span> Connected</div>
+          <div class="stat"><span id="dashComposed" class="stat-number">0</span> Composed</div>
         </div>
         <div class="tabs">
           <button id="tabAll" class="tab active">All</button>
@@ -59,7 +80,7 @@
         </div>
       </div>
       <div class="table-wrapper">
-        <table class="jobs-table"><thead><tr><th>Position</th><th>Company</th><th>Location</th><th>Poster</th><th>Email</th><th>Post/Job URL</th><th>Profile</th><th>Date</th></tr></thead>
+        <table class="jobs-table"><thead><tr><th>Position</th><th>Company</th><th>Location</th><th>Poster</th><th>Email</th><th>Cmp</th><th>Post/Job URL</th><th>Profile</th><th>Date</th></tr></thead>
         <tbody id="jobsBody"></tbody></table>
       </div>
       <p id="emptyMsg" class="empty-msg">No jobs tracked yet.</p>
