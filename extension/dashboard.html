@@ -49,13 +49,20 @@
             <div class="form-group"><label>Body</label>
               <textarea id="emailBody" rows="5" placeholder="Enter email body"></textarea>
             </div>
-            <div class="form-group"><label>Speed</label>
+            <div class="form-group"><label>Speed (delay between each field)</label>
               <select id="composeSpeed" class="speed-select">
                 <option value="300">Slow (0.3s)</option>
                 <option value="150" selected>Fast (0.15s)</option>
                 <option value="70">Faster (0.07s)</option>
                 <option value="0">Fastest (instant)</option>
               </select>
+            </div>
+            <div class="form-group"><label>Resume / Attachment</label>
+              <div class="resume-row">
+                <input type="file" id="resumeFileInput" accept=".pdf,.doc,.docx,.txt,.png,.jpg" class="resume-input">
+                <button id="btnClearResume" class="btn btn-outline btn-xs" style="display:none">Remove</button>
+              </div>
+              <div id="resumeStatus" class="file-status"></div>
             </div>
             <div class="form-row">
               <button id="btnComposeInGmail" class="btn btn-primary">Compose in Gmail</button>

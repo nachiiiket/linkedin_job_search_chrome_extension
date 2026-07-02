@@ -62,14 +62,13 @@ async function composeInGmail(jobs, port) {
 
     if (usingExistingTab) {
       try {
-        await chrome.tabs.sendMessage(gmailTab.id, { action: 'fillGmailCompose', data: { to, subject, body } });
+        await chrome.tabs.sendMessage(gmailTab.id, { action: 'fillGmailCompose', data: { to, subject, body, speed } });
       } catch (e) {
-        await chrome.tabs.update(gmailTab.id, { url: `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(to)}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}` });
+        await chrome.tabs.update(gmailTab.id, { url: `https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(to)}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}` });
         gmailTab.url = "https://mail.google.com/mail/";
       }
-      await new Promise(r => setTimeout(r, Math.min(speed, 2000)));
     } else {
-      const composeUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(to)}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+      const composeUrl = `https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(to)}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
       const tab = await chrome.tabs.create({ url: composeUrl, active: true });
       await new Promise(resolve => {
         const listener = (tabId) => {
@@ -84,10 +83,6 @@ async function composeInGmail(jobs, port) {
 
     await Storage.markComposed(job.job_id);
     completed++;
-
-    if (completed < total && speed > 0) {
-      await new Promise(r => setTimeout(r, speed));
-    }
   }
 
   safePost(port, { action: 'composeProgress', type: 'done', completed, total, message: `Composed ${completed} email(s) in Gmail.` });

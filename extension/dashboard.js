@@ -145,6 +145,34 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (port) port.postMessage({ action: "abortCompose" });
   });
 
+  document.getElementById("resumeFileInput").addEventListener("change", async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const data = { name: file.name, type: file.type, data: reader.result };
+      await Storage.saveResume(data);
+      document.getElementById("resumeStatus").textContent = `Attached: ${file.name}`;
+      document.getElementById("btnClearResume").style.display = "inline-block";
+    };
+    reader.readAsDataURL(file);
+  });
+
+  document.getElementById("btnClearResume").addEventListener("click", async () => {
+    await Storage.clearResume();
+    document.getElementById("resumeFileInput").value = "";
+    document.getElementById("resumeStatus").textContent = "";
+    document.getElementById("btnClearResume").style.display = "none";
+  });
+
+  (async () => {
+    const r = await Storage.getResume();
+    if (r) {
+      document.getElementById("resumeStatus").textContent = `Attached: ${r.name}`;
+      document.getElementById("btnClearResume").style.display = "inline-block";
+    }
+  })();
+
   document.getElementById("btnAddDummyEmails").addEventListener("click", async () => {
     const email = document.getElementById("dummyEmailInput").value.trim() || "test@example.com";
     const jobs = await Storage.getJobs();

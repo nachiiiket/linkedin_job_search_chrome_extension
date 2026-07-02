@@ -84,6 +84,19 @@ const Storage = {
     await chrome.storage.local.set({ scrapeState: state });
   },
 
+  async saveResume(data) {
+    await chrome.storage.local.set({ resumeFile: data });
+  },
+
+  async getResume() {
+    const r = await chrome.storage.local.get("resumeFile");
+    return r.resumeFile || null;
+  },
+
+  async clearResume() {
+    await chrome.storage.local.remove("resumeFile");
+  },
+
   async clearJobs() {
     await chrome.storage.local.set({ jobs: [] });
     await this.setState({ status: "idle", mode: "jobs", totalFound: 0 });

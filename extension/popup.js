@@ -110,6 +110,28 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (port) port.postMessage({ action: "composeInGmail", jobs });
   });
 
+  document.getElementById("popupResumeFile").addEventListener("change", async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async () => {
+      await Storage.saveResume({ name: file.name, type: file.type, data: reader.result });
+      document.getElementById("btnPopupClearResume").style.display = "inline-block";
+    };
+    reader.readAsDataURL(file);
+  });
+
+  document.getElementById("btnPopupClearResume").addEventListener("click", async () => {
+    await Storage.clearResume();
+    document.getElementById("popupResumeFile").value = "";
+    document.getElementById("btnPopupClearResume").style.display = "none";
+  });
+
+  (async () => {
+    const r = await Storage.getResume();
+    if (r) document.getElementById("btnPopupClearResume").style.display = "inline-block";
+  })();
+
   document.getElementById("btnAbortComposePopup").addEventListener("click", () => {
     if (port) port.postMessage({ action: "abortCompose" });
   });
