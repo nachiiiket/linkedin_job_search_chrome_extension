@@ -4,13 +4,12 @@ function connect() { port = chrome.runtime.connect({ name: "dashboard" }); port.
 function handle(msg) {
   if (msg.action === "state") updateState(msg.state, msg.stats);
   if (msg.action === "jobs") { allJobs = msg.jobs; renderJobs(allJobs); }
-  if (msg.action === "preferences") populateForm(msg.prefs);
   if (msg.action === "preferencesSaved") {
     document.getElementById("saveStatus").textContent = "Saved!"; setTimeout(() => document.getElementById("saveStatus").textContent = "", 2000);
     document.getElementById("emailSaveStatus").textContent = "Saved!"; setTimeout(() => document.getElementById("emailSaveStatus").textContent = "", 2000);
   }
   if (msg.action === "cleared") { allJobs = []; renderJobs([]); updateState({ status: "idle" }, { total: 0, applied: 0, connected: 0, sent: 0 }); }
-  if (msg.action === "preferences") populateEmailForm(msg.prefs);
+  if (msg.action === "preferences") { populateForm(msg.prefs); populateEmailForm(msg.prefs); }
   if (msg.action === "emailProgress") updateEmailProgress(msg);
   if (msg.action === "emailComplete") { finishEmailSending(msg); }
   if (msg.action === "emailLog") { addSendLog(msg.text); }
@@ -171,7 +170,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   allJobs = jobs;
   updateState(s, st);
   renderJobs(jobs);
-  if (port) port.postMessage({ action: "getPreferences" });
+  const prefs = await Storage.getPreferences();
+  populateForm(prefs);
+  populateEmailForm(prefs);
 
   document.getElementById("btnStart").addEventListener("click", async () => {
     const existing = await Storage.getPreferences();
@@ -205,12 +206,13 @@ document.addEventListener("DOMContentLoaded", async () => {
     document.getElementById("scrapingPrefs").style.display = "block";
     document.getElementById("emailPrefs").style.display = "none";
   });
-  document.getElementById("sidebarTabEmail").addEventListener("click", () => {
+  document.getElementById("sidebarTabEmail").addEventListener("click", async () => {
     document.getElementById("sidebarTabEmail").classList.add("active");
     document.getElementById("sidebarTabScraping").classList.remove("active");
     document.getElementById("scrapingPrefs").style.display = "none";
     document.getElementById("emailPrefs").style.display = "block";
-    if (port) port.postMessage({ action: "getPreferences" });
+    const prefs = await Storage.getPreferences();
+    populateEmailForm(prefs);
   });
 
   document.getElementById("btnSaveEmailPrefs").addEventListener("click", async () => {
