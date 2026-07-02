@@ -3,8 +3,12 @@
   "name": "LinkedIn Job Finder",
   "version": "1.0.0",
   "description": "Scrape LinkedIn job listings, track applications, and export to Excel.",
-  "permissions": ["storage", "downloads", "tabs", "notifications"],
+  "permissions": ["storage", "downloads", "tabs", "notifications", "identity"],
   "host_permissions": ["https://*.linkedin.com/*"],
+  "oauth2": {
+    "client_id": "YOUR_OAUTH_CLIENT_ID.apps.googleusercontent.com",
+    "scopes": ["https://www.googleapis.com/auth/gmail.send"]
+  },
   "action": {
     "default_popup": "popup.html",
     "default_title": "LinkedIn Job Finder",

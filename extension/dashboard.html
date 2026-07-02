@@ -22,10 +22,14 @@
   <div class="dashboard-body">
     <aside class="sidebar" id="sidebar">
       <div class="sidebar-header">
-        <h2>Preferences</h2>
+        <h2>Settings</h2>
         <button id="btnCollapseSidebar" class="sidebar-toggle" title="Collapse sidebar">◀</button>
       </div>
-      <div class="sidebar-content">
+      <div class="sidebar-tabs">
+        <button id="sidebarTabScraping" class="sidebar-tab active">Scraping</button>
+        <button id="sidebarTabEmail" class="sidebar-tab">Email</button>
+      </div>
+      <div class="sidebar-content" id="scrapingPrefs">
         <div class="form-group"><label>Job Roles (one per line)</label><textarea id="jobRoles" rows="6" placeholder="AI Engineer"></textarea></div>
         <div class="form-group"><label>Locations (one per line)</label><textarea id="locations" rows="3" placeholder="Pune"></textarea></div>
         <div class="form-group"><label>Target Companies (included in post search)</label><textarea id="targetCompanies" rows="2" placeholder="Google, Microsoft, ..."></textarea></div>
@@ -38,7 +42,34 @@
           <div class="form-group half"><label><input type="checkbox" id="onlyWithEmail"> Only save with email</label></div>
         </div>
         <div class="form-group"><label>Max per run</label><input type="number" id="maxJobsPerRun" min="1" max="200" value="50"></div>
+        <div class="form-group"><label>Speed</label><select id="scrapeSpeed"><option value="normal">Normal (random delays)</option><option value="fast">Fast (reduced delays)</option><option value="max">Max (no delays)</option></select></div>
         <button id="btnSavePrefs" class="btn btn-primary">Save</button><span id="saveStatus" class="save-status"></span>
+      </div>
+      <div class="sidebar-content" id="emailPrefs" style="display:none">
+        <div class="form-group"><label>Sender Email (Gmail address)</label><input type="email" id="senderEmail" placeholder="you@gmail.com"></div>
+        <div class="form-group"><label>Your Name (used as signature)</label><input type="text" id="yourName" placeholder="Your Full Name"></div>
+        <div class="form-group"><label>Email Subject (use {position}, {company}, {name})</label><input type="text" id="emailSubject" placeholder="Application for {position} at {company}"></div>
+        <div class="form-group"><label>Email Body (use {position}, {company}, {name}, {your_name})</label><textarea id="emailBody" rows="8" placeholder="Hi {name},..."></textarea></div>
+        <div class="form-group"><label>Resume PDF (optional, will be attached)</label>
+          <input type="file" id="resumeFile" accept=".pdf" style="font-size:12px;padding:4px 0">
+          <span id="resumeStatus" style="font-size:11px;color:#888;display:block;margin-top:2px"></span>
+        </div>
+        <div class="form-row">
+          <div class="form-group half"><label>Min Delay (sec)</label><input type="number" id="randomDelayMin" min="1" max="60" value="5"></div>
+          <div class="form-group half"><label>Max Delay (sec)</label><input type="number" id="randomDelayMax" min="1" max="120" value="15"></div>
+        </div>
+        <button id="btnSaveEmailPrefs" class="btn btn-primary">Save</button><span id="emailSaveStatus" class="save-status"></span>
+        <hr style="margin:16px 0;border:none;border-top:1px solid #e0e0e0">
+        <div class="email-send-section">
+          <button id="btnSendEmails" class="btn btn-primary" style="width:100%;margin-bottom:6px">Send Emails Now</button>
+          <button id="btnStopSending" class="btn btn-danger" style="display:none;width:100%;margin-bottom:6px">Stop Sending</button>
+          <div id="emailProgress" class="email-progress" style="display:none">
+            <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+            <div class="progress-text" id="progressText">0 / 0</div>
+            <div class="progress-detail" id="progressDetail">Preparing...</div>
+          </div>
+          <div id="sendLog" class="send-log"></div>
+        </div>
       </div>
     </aside>
 
@@ -49,6 +80,7 @@
         <div class="stats-bar">
           <div class="stat"><span id="dashTotal" class="stat-number">0</span> Total</div>
           <div class="stat"><span id="dashWithEmail" class="stat-number">0</span> With Email</div>
+          <div class="stat"><span id="dashSent" class="stat-number">0</span> Sent</div>
           <div class="stat"><span id="dashApplied" class="stat-number">0</span> Applied</div>
           <div class="stat"><span id="dashConnected" class="stat-number">0</span> Connected</div>
         </div>
@@ -59,7 +91,7 @@
         </div>
       </div>
       <div class="table-wrapper">
-        <table class="jobs-table"><thead><tr><th>Position</th><th>Company</th><th>Location</th><th>Poster</th><th>Email</th><th>Post/Job URL</th><th>Profile</th><th>Date</th></tr></thead>
+        <table class="jobs-table"><thead><tr><th>Position</th><th>Company</th><th>Location</th><th>Poster</th><th>Email</th><th>Email Status</th><th>Post/Job URL</th><th>Profile</th><th>Date</th></tr></thead>
         <tbody id="jobsBody"></tbody></table>
       </div>
       <p id="emptyMsg" class="empty-msg">No jobs tracked yet.</p>

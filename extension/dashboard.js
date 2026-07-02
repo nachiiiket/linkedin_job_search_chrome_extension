@@ -5,8 +5,15 @@ function handle(msg) {
   if (msg.action === "state") updateState(msg.state, msg.stats);
   if (msg.action === "jobs") { allJobs = msg.jobs; renderJobs(allJobs); }
   if (msg.action === "preferences") populateForm(msg.prefs);
-  if (msg.action === "preferencesSaved") { document.getElementById("saveStatus").textContent = "Saved!"; setTimeout(() => document.getElementById("saveStatus").textContent = "", 2000); }
-  if (msg.action === "cleared") { allJobs = []; renderJobs([]); updateState({ status: "idle" }, { total: 0, applied: 0, connected: 0 }); }
+  if (msg.action === "preferencesSaved") {
+    document.getElementById("saveStatus").textContent = "Saved!"; setTimeout(() => document.getElementById("saveStatus").textContent = "", 2000);
+    document.getElementById("emailSaveStatus").textContent = "Saved!"; setTimeout(() => document.getElementById("emailSaveStatus").textContent = "", 2000);
+  }
+  if (msg.action === "cleared") { allJobs = []; renderJobs([]); updateState({ status: "idle" }, { total: 0, applied: 0, connected: 0, sent: 0 }); }
+  if (msg.action === "preferences") populateEmailForm(msg.prefs);
+  if (msg.action === "emailProgress") updateEmailProgress(msg);
+  if (msg.action === "emailComplete") { finishEmailSending(msg); }
+  if (msg.action === "emailLog") { addSendLog(msg.text); }
 }
 
 function updateState(state, stats) {
@@ -20,10 +27,34 @@ function updateState(state, stats) {
   if (stats) {
     document.getElementById("dashTotal").textContent = stats.total;
     document.getElementById("dashWithEmail").textContent = stats.withEmail || 0;
+    document.getElementById("dashSent").textContent = stats.sent || 0;
     document.getElementById("dashApplied").textContent = stats.applied;
     document.getElementById("dashConnected").textContent = stats.connected;
     chrome.action.setBadgeText({ text: String(stats.total) });
   }
+}
+
+function updateEmailProgress(msg) {
+  const p = document.getElementById("emailProgress"); p.style.display = "block";
+  document.getElementById("progressFill").style.width = msg.total > 0 ? (msg.current / msg.total * 100) + "%" : "0%";
+  document.getElementById("progressText").textContent = msg.sent + " sent, " + msg.failed + " failed";
+  document.getElementById("progressDetail").textContent = "(" + msg.current + " / " + msg.total + ") - " + (msg.status || "");
+}
+
+function finishEmailSending(msg) {
+  document.getElementById("btnSendEmails").style.display = "block";
+  document.getElementById("btnStopSending").style.display = "none";
+  document.getElementById("progressFill").style.width = "100%";
+  document.getElementById("progressText").textContent = msg.sent + " sent, " + msg.failed + " failed";
+  document.getElementById("progressDetail").textContent = msg.total > 0 ? "Completed" : "Cancelled";
+  addSendLog("Done. Sent: " + msg.sent + ", Failed: " + msg.failed + ", Total: " + msg.total);
+  Storage.getStats().then(stats => { updateState({ status: "idle" }, stats); renderJobs(allJobs); });
+}
+
+function addSendLog(text) {
+  const log = document.getElementById("sendLog");
+  const d = document.createElement("div"); d.className = "log-entry"; d.textContent = text;
+  log.appendChild(d); log.scrollTop = log.scrollHeight;
 }
 
 function populateForm(p) {
@@ -39,6 +70,29 @@ function populateForm(p) {
   document.getElementById("dashSearchMode").value = p.searchMode || "jobs";
 }
 
+function populateEmailForm(p) {
+  document.getElementById("senderEmail").value = p.senderEmail || "";
+  document.getElementById("yourName").value = p.yourName || "";
+  document.getElementById("emailSubject").value = p.emailSubject || "";
+  document.getElementById("emailBody").value = p.emailBody || "";
+  document.getElementById("randomDelayMin").value = p.randomDelayMin || 5;
+  document.getElementById("randomDelayMax").value = p.randomDelayMax || 15;
+  Storage.getResumeData().then(d => {
+    document.getElementById("resumeStatus").textContent = d ? "Resume loaded (" + (d.name || "unknown") + ")" : "No resume selected";
+  });
+}
+
+function getEmailPrefs() {
+  return {
+    senderEmail: document.getElementById("senderEmail").value.trim(),
+    yourName: document.getElementById("yourName").value.trim(),
+    emailSubject: document.getElementById("emailSubject").value.trim(),
+    emailBody: document.getElementById("emailBody").value,
+    randomDelayMin: parseInt(document.getElementById("randomDelayMin").value) || 5,
+    randomDelayMax: parseInt(document.getElementById("randomDelayMax").value) || 15,
+  };
+}
+
 function getPrefs() {
   return {
     jobRoles: document.getElementById("jobRoles").value.split("\n").map(s => s.trim()).filter(Boolean),
@@ -49,6 +103,7 @@ function getPrefs() {
     onlyWithEmail: document.getElementById("onlyWithEmail").checked,
     postedWithinDays: parseInt(document.getElementById("postedWithinDays").value) || 1,
     maxJobsPerRun: parseInt(document.getElementById("maxJobsPerRun").value) || 50,
+    scrapeSpeed: document.getElementById("scrapeSpeed").value,
     targetPosterTitles: [], excludedKeywords: [],
     searchMode: document.getElementById("dashSearchMode").value,
   };
@@ -71,6 +126,11 @@ function renderJobs(jobs) {
       if (i === 4) td.className = "email-cell";
       tr.appendChild(td);
     });
+    const statusTd = document.createElement("td");
+    const status = j.email_sent || "No";
+    statusTd.textContent = status;
+    statusTd.className = "email-status-" + status.toLowerCase();
+    tr.appendChild(statusTd);
     const urlTd = document.createElement("td");
     if (j.job_url) { const a = document.createElement("a"); a.href = j.job_url; a.textContent = "Open"; a.target = "_blank"; urlTd.appendChild(a); }
     else urlTd.textContent = "-";
@@ -100,9 +160,19 @@ document.addEventListener("DOMContentLoaded", async () => {
   renderJobs(jobs);
   if (port) port.postMessage({ action: "getPreferences" });
 
-  document.getElementById("btnStart").addEventListener("click", () => { const p = getPrefs(); if (port) port.postMessage({ action: "startScraping", config: p }); });
+  document.getElementById("btnStart").addEventListener("click", async () => {
+    const existing = await Storage.getPreferences();
+    const p = getPrefs();
+    Object.assign(existing, p);
+    if (port) port.postMessage({ action: "startScraping", config: existing });
+  });
   document.getElementById("btnStop").addEventListener("click", () => { if (port) port.postMessage({ action: "stopScraping" }); });
-  document.getElementById("btnSavePrefs").addEventListener("click", () => { const p = getPrefs(); if (port) port.postMessage({ action: "savePreferences", prefs: p }); });
+  document.getElementById("btnSavePrefs").addEventListener("click", async () => {
+    const existing = await Storage.getPreferences();
+    const p = getPrefs();
+    Object.assign(existing, p);
+    if (port) port.postMessage({ action: "savePreferences", prefs: existing });
+  });
   document.getElementById("btnExportCSV").addEventListener("click", () => { Storage.getJobs().then(j => Exporter.downloadCSV(j)); });
   document.getElementById("btnExportXLS").addEventListener("click", () => { Storage.getJobs().then(j => Exporter.downloadXLS(j)); });
   document.getElementById("btnClear").addEventListener("click", () => { if (confirm("Delete all?")) { if (port) port.postMessage({ action: "clearJobs" }); } });
@@ -115,4 +185,55 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("tabAll").addEventListener("click", () => switchTab("tabAll"));
   document.getElementById("tabWithEmail").addEventListener("click", () => switchTab("tabWithEmail"));
   document.getElementById("tabWithoutEmail").addEventListener("click", () => switchTab("tabWithoutEmail"));
+
+  document.getElementById("sidebarTabScraping").addEventListener("click", () => {
+    document.getElementById("sidebarTabScraping").classList.add("active");
+    document.getElementById("sidebarTabEmail").classList.remove("active");
+    document.getElementById("scrapingPrefs").style.display = "block";
+    document.getElementById("emailPrefs").style.display = "none";
+  });
+  document.getElementById("sidebarTabEmail").addEventListener("click", () => {
+    document.getElementById("sidebarTabEmail").classList.add("active");
+    document.getElementById("sidebarTabScraping").classList.remove("active");
+    document.getElementById("scrapingPrefs").style.display = "none";
+    document.getElementById("emailPrefs").style.display = "block";
+    if (port) port.postMessage({ action: "getPreferences" });
+  });
+
+  document.getElementById("btnSaveEmailPrefs").addEventListener("click", async () => {
+    const existing = await Storage.getPreferences();
+    const emailPrefs = getEmailPrefs();
+    Object.assign(existing, emailPrefs);
+    if (port) port.postMessage({ action: "savePreferences", prefs: existing });
+  });
+
+  document.getElementById("resumeFile").addEventListener("change", async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (file.type !== "application/pdf") { alert("Please select a PDF file."); return; }
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      const base64 = evt.target.result.split(",")[1];
+      await Storage.saveResumeData({ name: file.name, data: base64 });
+      document.getElementById("resumeStatus").textContent = "Resume loaded (" + file.name + ")";
+    };
+    reader.readAsDataURL(file);
+  });
+
+  document.getElementById("btnSendEmails").addEventListener("click", async () => {
+    const prefs = await Storage.getEmailPrefs();
+    if (!prefs.senderEmail) { alert("Please configure sender email in Email Preferences first."); return; }
+    const recipients = await Storage.getRecipientsToSend();
+    if (!recipients.length) { alert("No unsent recipients with email found. Scrape some jobs/posts first."); return; }
+    document.getElementById("btnSendEmails").style.display = "none";
+    document.getElementById("btnStopSending").style.display = "block";
+    document.getElementById("emailProgress").style.display = "block";
+    document.getElementById("sendLog").innerHTML = "";
+    addSendLog("Starting email campaign to " + recipients.length + " recipients...");
+    if (port) port.postMessage({ action: "startEmailSending" });
+  });
+
+  document.getElementById("btnStopSending").addEventListener("click", () => {
+    if (port) port.postMessage({ action: "stopEmailSending" });
+  });
 });
