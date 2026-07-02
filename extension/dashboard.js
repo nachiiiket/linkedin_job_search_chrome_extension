@@ -144,6 +144,25 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("btnAbortCompose").addEventListener("click", () => {
     if (port) port.postMessage({ action: "abortCompose" });
   });
+
+  document.getElementById("btnAddDummyEmails").addEventListener("click", async () => {
+    const jobs = await Storage.getJobs();
+    let count = 0;
+    for (const j of jobs) {
+      if (!j.email || !j.email.trim()) {
+        j.email = "test@example.com";
+        count++;
+      }
+    }
+    await chrome.storage.local.set({ jobs });
+    allJobs = jobs;
+    renderJobs(jobs);
+    const st = await Storage.getStats();
+    document.getElementById("dashWithEmail").textContent = st.withEmail;
+    const ds = document.getElementById("dummyStatus");
+    ds.textContent = count ? `Added ${count} test email(s)` : "All jobs already have emails";
+    setTimeout(() => ds.textContent = "", 3000);
+  });
 });
 
 function handleComposeProgress(msg) {
