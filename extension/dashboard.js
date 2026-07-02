@@ -236,8 +236,11 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
 
   document.getElementById("btnSendEmails").addEventListener("click", async () => {
-    const prefs = await Storage.getEmailPrefs();
-    if (!prefs.senderEmail) { alert("Please configure sender email in Email Preferences first."); return; }
+    const senderEmail = document.getElementById("senderEmail").value.trim();
+    if (!senderEmail) { alert("Please configure sender email in Email Preferences first."); return; }
+    const existing = await Storage.getPreferences();
+    Object.assign(existing, getEmailPrefs());
+    await Storage.savePreferences(existing);
     const recipients = await Storage.getRecipientsToSend();
     if (!recipients.length) { alert("No unsent recipients with email found. Scrape some jobs/posts first."); return; }
     document.getElementById("btnSendEmails").style.display = "none";
@@ -253,10 +256,13 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
 
   document.getElementById("btnSendTest").addEventListener("click", async () => {
-    const prefs = await Storage.getEmailPrefs();
-    if (!prefs.senderEmail) { alert("Please configure sender email first."); return; }
+    const senderEmail = document.getElementById("senderEmail").value.trim();
+    if (!senderEmail) { alert("Please configure sender email first."); return; }
     const testTo = document.getElementById("testEmail").value.trim();
     if (!testTo) { alert("Enter a test email address."); return; }
+    const existing = await Storage.getPreferences();
+    Object.assign(existing, getEmailPrefs());
+    await Storage.savePreferences(existing);
     document.getElementById("btnSendTest").disabled = true;
     document.getElementById("btnSendTest").textContent = "Sending...";
     document.getElementById("testResult").style.display = "none";
