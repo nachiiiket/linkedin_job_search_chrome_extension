@@ -7,7 +7,6 @@
     bodyField: 'div[aria-label="Message Body"][role="textbox"], div.Am.editable[aria-label*="Message"], div.editable[role="textbox"]',
     sendBtn: 'div.T-I-atl[role="button"], div[aria-label*="Send"][role="button"]',
     composeBtn: '.aic .z0 div, div[gh="cm"], div[role="button"][act="9"]',
-    minimizeBtn: 'div[aria-label*="Minimize"], div[aria-label*="minimize"], .T-I.J-J5-Ji.aGx.aoC, [aria-label*="minimise"]',
   };
 
   function getComposeDialog() {
@@ -26,25 +25,21 @@
     return null;
   }
 
+  let _resumeAttached = false;
+
   function openCompose() {
     const btn = document.querySelector(SELECTORS.composeBtn);
-    if (btn) { btn.click(); return true; }
+    if (btn) { btn.click(); _resumeAttached = false; return true; }
     return false;
   }
 
-  function unmaximizeDialog(dialog) {
-    const btn = dialog.querySelector(SELECTORS.minimizeBtn) ||
-                document.querySelector(SELECTORS.minimizeBtn);
-    if (btn) btn.click();
-  }
-
   async function attachResume(dialog) {
+    if (_resumeAttached) return;
     try {
       const { resumeFile } = await chrome.storage.local.get('resumeFile');
       if (!resumeFile) return;
 
-      const fileInput = dialog.querySelector('input[type="file"]') ||
-                        document.querySelector('input[type="file"]');
+      const fileInput = document.querySelector('input[type="file"]');
       if (!fileInput) return;
 
       const raw = resumeFile.data.includes(',') ? resumeFile.data.split(',')[1] : resumeFile.data;
@@ -53,25 +48,32 @@
       const ia = new Uint8Array(ab);
       for (let i = 0; i < byteStr.length; i++) ia[i] = byteStr.charCodeAt(i);
       const blob = new Blob([ab], { type: resumeFile.type || 'application/octet-stream' });
-
       const file = new File([blob], resumeFile.name, { type: resumeFile.type });
+
       const dt = new DataTransfer();
       dt.items.add(file);
-      Object.defineProperty(fileInput, 'files', { value: dt.files });
+
+      const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'files');
+      if (nativeSetter && nativeSetter.set) {
+        nativeSetter.set.call(fileInput, dt.files);
+      } else {
+        Object.defineProperty(fileInput, 'files', { value: dt.files, configurable: true });
+      }
+
       fileInput.dispatchEvent(new Event('change', { bubbles: true }));
-    } catch (e) {}
+      _resumeAttached = true;
+    } catch (e) {
+      console.warn('[GF] attachResume error:', e);
+    }
   }
 
-  async function fillCompose({ to, subject, body, speed }) {
-    speed = speed || 150;
+  async function fillCompose({ to, subject, body, speed, autoSend }) {
+    speed = speed != null ? speed : 1000;
 
     const dialog = getComposeDialog();
     if (!dialog && !openCompose()) return;
     const d = await waitForDialog();
     if (!d) return;
-
-    unmaximizeDialog(d);
-    await wait(200);
 
     const toField = d.querySelector(SELECTORS.toField);
     if (toField && to) {
@@ -99,6 +101,14 @@
 
     await attachResume(d);
     await wait(speed);
+
+    if (autoSend) {
+      const sendBtn = d.querySelector(SELECTORS.sendBtn);
+      if (sendBtn) {
+        sendBtn.click();
+        await wait(3000);
+      }
+    }
   }
 
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {

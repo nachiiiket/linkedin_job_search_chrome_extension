@@ -5,7 +5,13 @@ function handle(msg) {
   if (msg.action === "state") updateState(msg.state, msg.stats);
   if (msg.action === "jobs") { allJobs = msg.jobs; renderJobs(allJobs); }
   if (msg.action === "preferences") populateForm(msg.prefs);
-  if (msg.action === "preferencesSaved") { document.getElementById("saveStatus").textContent = "Saved!"; setTimeout(() => document.getElementById("saveStatus").textContent = "", 2000); }
+  if (msg.action === "preferencesSaved") { 
+    document.getElementById("saveStatus").textContent = "Saved!"; 
+    setTimeout(() => document.getElementById("saveStatus").textContent = "", 2000);
+    document.getElementById("emailSaveStatus").textContent = "Saved!"; 
+    setTimeout(() => document.getElementById("emailSaveStatus").textContent = "", 2000);
+    if (port) port.postMessage({ action: "getPreferences" });
+  }
   if (msg.action === "cleared") { allJobs = []; renderJobs([]); updateState({ status: "idle" }, { total: 0, applied: 0, connected: 0 }); }
   if (msg.action === "composeProgress") handleComposeProgress(msg);
 }
@@ -42,7 +48,16 @@ function populateForm(p) {
   document.getElementById("dashSearchMode").value = p.searchMode || "jobs";
   document.getElementById("emailSubject").value = p.emailSubject || "";
   document.getElementById("emailBody").value = p.emailBody || "";
-  document.getElementById("composeSpeed").value = p.composeSpeed || 150;
+  document.getElementById("composeSpeed").value = p.composeSpeed != null ? p.composeSpeed : 1000;
+  document.getElementById("excludedEmailDomains").value = (p.excludedEmailDomains || []).join(", ");
+  document.getElementById("autoSendEnabled").checked = p.autoSendEnabled === true;
+  document.getElementById("autoSendMode").value = p.autoSendMode || "realtime";
+  document.getElementById("batchSize").value = p.batchSize || 10;
+  document.getElementById("sendMinDelay").value = p.sendMinDelay || 1000;
+  document.getElementById("sendMaxDelay").value = p.sendMaxDelay || 3000;
+  document.getElementById("autoSendOptions").style.display = p.autoSendEnabled ? "block" : "none";
+  document.getElementById("batchSizeLabel").style.display = p.autoSendMode === "batch" ? "" : "none";
+  document.getElementById("batchSize").style.display = p.autoSendMode === "batch" ? "" : "none";
 }
 
 function getPrefs() {
@@ -60,7 +75,13 @@ function getPrefs() {
     searchMode: document.getElementById("dashSearchMode").value,
     emailSubject: document.getElementById("emailSubject").value,
     emailBody: document.getElementById("emailBody").value,
-    composeSpeed: parseInt(document.getElementById("composeSpeed").value) || 150,
+    composeSpeed: parseInt(document.getElementById("composeSpeed").value) || 0,
+    excludedEmailDomains: document.getElementById("excludedEmailDomains").value.split(",").map(s => s.trim()).filter(Boolean),
+    autoSendEnabled: document.getElementById("autoSendEnabled").checked,
+    autoSendMode: document.getElementById("autoSendMode").value,
+    batchSize: parseInt(document.getElementById("batchSize").value) || 10,
+    sendMinDelay: parseInt(document.getElementById("sendMinDelay").value) || 1000,
+    sendMaxDelay: parseInt(document.getElementById("sendMaxDelay").value) || 3000,
   };
 }
 
@@ -115,6 +136,19 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("btnStart").addEventListener("click", () => { const p = getPrefs(); if (port) port.postMessage({ action: "startScraping", config: p }); });
   document.getElementById("btnStop").addEventListener("click", () => { if (port) port.postMessage({ action: "stopScraping" }); });
   document.getElementById("btnSavePrefs").addEventListener("click", () => { const p = getPrefs(); if (port) port.postMessage({ action: "savePreferences", prefs: p }); });
+  document.getElementById("btnSaveEmailPrefs").addEventListener("click", () => {
+    const p = getPrefs();
+    document.getElementById("emailSaveStatus").textContent = "Saving...";
+    if (port) port.postMessage({ action: "savePreferences", prefs: p });
+  });
+  document.getElementById("autoSendEnabled").addEventListener("change", () => {
+    document.getElementById("autoSendOptions").style.display = document.getElementById("autoSendEnabled").checked ? "block" : "none";
+  });
+  document.getElementById("autoSendMode").addEventListener("change", () => {
+    const b = document.getElementById("autoSendMode").value === "batch";
+    document.getElementById("batchSizeLabel").style.display = b ? "" : "none";
+    document.getElementById("batchSize").style.display = b ? "" : "none";
+  });
   document.getElementById("btnExportCSV").addEventListener("click", () => { Storage.getJobs().then(j => Exporter.downloadCSV(j)); });
   document.getElementById("btnExportXLS").addEventListener("click", () => { Storage.getJobs().then(j => Exporter.downloadXLS(j)); });
   document.getElementById("btnClear").addEventListener("click", () => { if (confirm("Delete all?")) { if (port) port.postMessage({ action: "clearJobs" }); } });
@@ -213,6 +247,18 @@ function handleComposeProgress(msg) {
     Storage.getStats().then(st => {
       document.getElementById("dashComposed").textContent = st.composed || 0;
     });
+  } else if (msg.type === "wait") {
+    entry.classList.add("log-info");
+    entry.textContent = msg.message;
+    log.appendChild(entry);
+  } else if (msg.type === "skip") {
+    entry.classList.add("log-info");
+    entry.textContent = msg.message;
+    log.appendChild(entry);
+  } else if (msg.type === "warn") {
+    entry.classList.add("log-warn");
+    entry.textContent = msg.message;
+    log.appendChild(entry);
   } else if (msg.type === "abort") {
     document.getElementById("btnComposeInGmail").style.display = "inline-block";
     document.getElementById("btnAbortCompose").style.display = "none";

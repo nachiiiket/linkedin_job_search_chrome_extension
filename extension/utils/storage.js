@@ -24,7 +24,13 @@ const defaultPreferences = {
   scrapeSpeed: "normal",
   emailSubject: "",
   emailBody: "",
-  composeSpeed: 150
+  composeSpeed: 1000,
+  excludedEmailDomains: [],
+  autoSendEnabled: false,
+  autoSendMode: "realtime",
+  batchSize: 10,
+  sendMinDelay: 1000,
+  sendMaxDelay: 3000
 };
 
 const Storage = {

@@ -1,8 +1,104 @@
 importScripts("utils/storage.js", "utils/exporter.js");
 
 let composeAbort = false;
+let _composeQueue = [];
+let _isComposing = false;
+let _pendingBatch = [];
 
 let activeTabId = null;
+
+function rand(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
+
+async function getOrWaitGmailTab() {
+  let gmailTab = await getGmailTab();
+  let tabId = gmailTab && await isContentScriptReady(gmailTab.id) ? gmailTab.id : null;
+  if (tabId) return tabId;
+  for (let i = 0; i < 60; i++) {
+    if (composeAbort) return null;
+    await new Promise(r => setTimeout(r, 2000));
+    gmailTab = await getGmailTab();
+    if (gmailTab && await isContentScriptReady(gmailTab.id)) return gmailTab.id;
+  }
+  return null;
+}
+
+async function sendSingleJob(job, prefs, tabId) {
+  const to = job.email.split('\n')[0].trim();
+  const subject = prefs.emailSubject || '';
+  const body = prefs.emailBody || '';
+  const speed = prefs.composeSpeed != null ? Number(prefs.composeSpeed) : 1000;
+  const autoSend = prefs.autoSendEnabled === true;
+  const minDelay = Number(prefs.sendMinDelay) || 1000;
+  const maxDelay = Number(prefs.sendMaxDelay) || 3000;
+  try {
+    await chrome.tabs.sendMessage(tabId, { action: 'fillGmailCompose', data: { to, subject, body, speed, autoSend } });
+    await Storage.markComposed(job.job_id);
+  } catch (e) {
+    return false;
+  }
+  if (minDelay > 0 && maxDelay > 0) {
+    await new Promise(r => setTimeout(r, rand(minDelay, maxDelay)));
+  }
+  return true;
+}
+
+function isDomainExcluded(job, excluded) {
+  if (!excluded || !excluded.length) return false;
+  const domain = ((job.email || '').toLowerCase().split('@')[1] || '');
+  return excluded.some(d => domain.includes(d));
+}
+
+async function processQueue() {
+  if (_isComposing || _composeQueue.length === 0) return;
+  _isComposing = true;
+  const prefs = await Storage.getPreferences();
+  const excluded = (prefs.excludedEmailDomains || []).map(d => d.toLowerCase());
+  const tabId = await getOrWaitGmailTab();
+  if (!tabId) { _isComposing = false; return; }
+  while (_composeQueue.length > 0) {
+    if (composeAbort) { _composeQueue = []; break; }
+    const job = _composeQueue.shift();
+    if (isDomainExcluded(job, excluded)) continue;
+    const ok = await sendSingleJob(job, prefs, tabId);
+    if (!ok) break;
+  }
+  _isComposing = false;
+}
+
+async function processBatch() {
+  if (_pendingBatch.length === 0) return;
+  const jobs = _pendingBatch.splice(0);
+  const prefs = await Storage.getPreferences();
+  const excluded = (prefs.excludedEmailDomains || []).map(d => d.toLowerCase());
+  const tabId = await getOrWaitGmailTab();
+  if (!tabId) return;
+  for (const job of jobs) {
+    if (composeAbort) break;
+    if (isDomainExcluded(job, excluded)) continue;
+    const ok = await sendSingleJob(job, prefs, tabId);
+    if (!ok) break;
+  }
+}
+
+async function handleAutoSendJob(job) {
+  if (!job || !job.email) return;
+  const prefs = await Storage.getPreferences();
+  if (prefs.autoSendEnabled !== true) return;
+  if (prefs.autoSendMode === "realtime") {
+    _composeQueue.push(job);
+    processQueue();
+  } else if (prefs.autoSendMode === "batch") {
+    _pendingBatch.push(job);
+    const size = Number(prefs.batchSize) || 10;
+    if (_pendingBatch.length >= size) processBatch();
+  }
+}
+
+async function handleAutoSendFlush() {
+  const prefs = await Storage.getPreferences();
+  if (prefs.autoSendEnabled !== true) return;
+  if (prefs.autoSendMode === "batch" && _pendingBatch.length > 0) processBatch();
+}
 
 async function getLinkedInTab() {
   const tabs = await chrome.tabs.query({ url: "https://*.linkedin.com/*" });
@@ -13,10 +109,6 @@ async function getLinkedInTab() {
 
 async function isContentScriptReady(tabId) {
   try { const r = await chrome.tabs.sendMessage(tabId, { action: "ping" }); return !!(r && r.ok); } catch { return false; }
-}
-
-function fillTemplate(template, vars) {
-  return template.replace(/\{(\w+)\}/g, (_, key) => vars[key] || '');
 }
 
 async function getGmailTab() {
@@ -33,20 +125,45 @@ function safePost(port, msg) {
 async function composeInGmail(jobs, port) {
   composeAbort = false;
   const prefs = await Storage.getPreferences();
-  const emailJobs = jobs.filter(j => j.email && j.email.trim() && j.composed !== "Yes");
-  const speed = Number(prefs.composeSpeed) || 150;
+  let emailJobs = jobs.filter(j => j.email && j.email.trim() && j.composed !== "Yes");
+  const excluded = (prefs.excludedEmailDomains || []).map(d => d.toLowerCase());
+  if (excluded.length) {
+    const filtered = [];
+    for (const j of emailJobs) {
+      if (isDomainExcluded(j, excluded)) {
+        safePost(port, { action: 'composeProgress', type: 'skip', message: `Skipped ${j.email} (excluded domain)` });
+      } else {
+        filtered.push(j);
+      }
+    }
+    emailJobs = filtered;
+  }
 
   if (emailJobs.length === 0) {
     safePost(port, { action: 'composeProgress', type: 'done', message: 'No new jobs with email to compose.' });
     return;
   }
 
-  const gmailTab = await getGmailTab();
-  const usingExistingTab = !!gmailTab && gmailTab.url.includes("mail.google.com/mail");
+  let gmailTab = await getGmailTab();
+  let tabId = gmailTab && await isContentScriptReady(gmailTab.id) ? gmailTab.id : null;
+
+  if (!tabId) {
+    safePost(port, { action: 'composeProgress', type: 'wait', message: 'Open Gmail in a tab to start composing...' });
+    notify("Gmail Required", "Open Gmail in a tab for the extension to compose emails.");
+    tabId = await getOrWaitGmailTab();
+    if (!tabId) {
+      safePost(port, { action: 'composeProgress', type: 'done', message: 'Timed out waiting for Gmail tab.' });
+      return;
+    }
+  }
+
   let completed = 0;
   const total = emailJobs.length;
-  const speedLabel = prefs.composeSpeed >= 300 ? 'Slow' : prefs.composeSpeed >= 150 ? 'Fast' : prefs.composeSpeed >= 70 ? 'Faster' : 'Fastest';
-  safePost(port, { action: 'composeProgress', type: 'start', total, message: `Starting compose for ${total} job(s)... (${speedLabel})` + (usingExistingTab ? ' using your Gmail tab' : '') });
+  const speed = prefs.composeSpeed != null ? Number(prefs.composeSpeed) : 1000;
+  const autoSend = prefs.autoSendEnabled === true;
+  const minDelay = Number(prefs.sendMinDelay) || 1000;
+  const maxDelay = Number(prefs.sendMaxDelay) || 3000;
+  safePost(port, { action: 'composeProgress', type: 'start', total, message: `Starting compose for ${total} job(s)...` });
 
   for (const job of emailJobs) {
     if (composeAbort) {
@@ -60,29 +177,20 @@ async function composeInGmail(jobs, port) {
 
     safePost(port, { action: 'composeProgress', type: 'progress', completed, total, current: to, subject });
 
-    if (usingExistingTab) {
-      try {
-        await chrome.tabs.sendMessage(gmailTab.id, { action: 'fillGmailCompose', data: { to, subject, body, speed } });
-      } catch (e) {
-        await chrome.tabs.update(gmailTab.id, { url: `https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(to)}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}` });
-        gmailTab.url = "https://mail.google.com/mail/";
-      }
-    } else {
-      const composeUrl = `https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(to)}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-      const tab = await chrome.tabs.create({ url: composeUrl, active: true });
-      await new Promise(resolve => {
-        const listener = (tabId) => {
-          if (tabId === tab.id) {
-            chrome.tabs.onRemoved.removeListener(listener);
-            resolve();
-          }
-        };
-        chrome.tabs.onRemoved.addListener(listener);
-      });
+    try {
+      await chrome.tabs.sendMessage(tabId, { action: 'fillGmailCompose', data: { to, subject, body, speed, autoSend } });
+    } catch (e) {
+      safePost(port, { action: 'composeProgress', type: 'warn', message: 'Gmail tab lost. Skipping remaining emails.' });
+      break;
     }
 
     await Storage.markComposed(job.job_id);
     completed++;
+
+    if (completed < total && minDelay > 0 && maxDelay > 0) {
+      const waitMs = rand(minDelay, maxDelay);
+      await new Promise(r => setTimeout(r, waitMs));
+    }
   }
 
   safePost(port, { action: 'composeProgress', type: 'done', completed, total, message: `Composed ${completed} email(s) in Gmail.` });
@@ -103,6 +211,7 @@ async function updateBadge() {
 chrome.runtime.onMessage.addListener((msg, sender) => {
   if (msg.action === "jobFound") {
     updateBadge();
+    handleAutoSendJob(msg.job);
     return false;
   }
   if (msg.action === "scrapingComplete") {
@@ -110,6 +219,7 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
     Storage.setState({ status: "idle", mode: "jobs", totalFound: 0 });
     chrome.runtime.sendMessage({ action: "scrapingComplete" }).catch(() => {});
     updateBadge();
+    handleAutoSendFlush();
     return false;
   }
 });

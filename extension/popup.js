@@ -45,6 +45,18 @@ function handleComposeProgress(msg) {
     entry.classList.add("log-active");
     entry.textContent = `[${msg.completed + 1}/${msg.total}] ${msg.current}`;
     log.appendChild(entry);
+  } else if (msg.type === "wait") {
+    entry.classList.add("log-info");
+    entry.textContent = msg.message;
+    log.appendChild(entry);
+  } else if (msg.type === "warn") {
+    entry.classList.add("log-warn");
+    entry.textContent = msg.message;
+    log.appendChild(entry);
+  } else if (msg.type === "skip") {
+    entry.classList.add("log-info");
+    entry.textContent = msg.message;
+    log.appendChild(entry);
   } else {
     document.getElementById("btnComposePopup").style.display = "flex";
     document.getElementById("btnAbortComposePopup").style.display = "none";
@@ -67,8 +79,13 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("jobsFirstPageOnly").checked = prefs.jobsFirstPageOnly !== false;
   document.getElementById("searchMode").value = prefs.searchMode || "jobs";
   document.getElementById("popupCompanies").value = (prefs.targetCompanies || []).join(", ");
-  document.getElementById("popupSpeed").value = prefs.composeSpeed || 150;
+  document.getElementById("popupSpeed").value = prefs.composeSpeed != null ? prefs.composeSpeed : 1000;
   document.getElementById("scrapeSpeed").value = prefs.scrapeSpeed || "normal";
+  document.getElementById("popupExcludedDomains").value = (prefs.excludedEmailDomains || []).join(", ");
+  document.getElementById("popupAutoSend").checked = prefs.autoSendEnabled === true;
+  document.getElementById("popupAutoSendMode").value = prefs.autoSendMode || "realtime";
+  document.getElementById("popupBatchSize").value = prefs.batchSize || 10;
+  if (prefs.autoSendEnabled) document.getElementById("popupAutoSendOptions").style.display = "flex";
 
   document.getElementById("btnStart").addEventListener("click", async () => {
     prefs.searchMode = document.getElementById("searchMode").value;
@@ -87,6 +104,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     chrome.tabs.create({ url: "dashboard.html" });
   });
 
+  document.getElementById("popupAutoSend").addEventListener("change", () => {
+    document.getElementById("popupAutoSendOptions").style.display = document.getElementById("popupAutoSend").checked ? "flex" : "none";
+  });
+
   document.getElementById("btnDummyEmails").addEventListener("click", async () => {
     const email = document.getElementById("popupDummyEmail").value.trim() || "test@example.com";
     const jobs = await Storage.getJobs();
@@ -98,7 +119,11 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   document.getElementById("btnComposePopup").addEventListener("click", async () => {
     const prefs2 = await Storage.getPreferences();
-    prefs2.composeSpeed = parseInt(document.getElementById("popupSpeed").value) || 150;
+    prefs2.composeSpeed = parseInt(document.getElementById("popupSpeed").value) || 0;
+    prefs2.excludedEmailDomains = document.getElementById("popupExcludedDomains").value.split(",").map(s => s.trim()).filter(Boolean);
+    prefs2.autoSendEnabled = document.getElementById("popupAutoSend").checked;
+    prefs2.autoSendMode = document.getElementById("popupAutoSendMode").value;
+    prefs2.batchSize = parseInt(document.getElementById("popupBatchSize").value) || 10;
     await Storage.savePreferences(prefs2);
     const jobs = await Storage.getJobs();
     const emailJobs = jobs.filter(j => j.email && j.email.trim() && j.composed !== "Yes");
