@@ -132,6 +132,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   updateState(s, st);
   renderJobs(jobs);
   if (port) port.postMessage({ action: "getPreferences" });
+  const ca = await Storage.getComposeState();
+  if (ca) { document.getElementById("btnComposeInGmail").style.display = "none"; document.getElementById("btnAbortCompose").style.display = "inline-block"; }
 
   document.getElementById("btnStart").addEventListener("click", () => { const p = getPrefs(); if (port) port.postMessage({ action: "startScraping", config: p }); });
   document.getElementById("btnStop").addEventListener("click", () => { if (port) port.postMessage({ action: "stopScraping" }); });
@@ -165,20 +167,16 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("btnComposeInGmail").addEventListener("click", async () => {
     const prefs = getPrefs();
     if (port) port.postMessage({ action: "savePreferences", prefs });
-    const jobs = await Storage.getJobs();
-    const emailJobs = jobs.filter(j => j.email && j.email.trim() && j.composed !== "Yes");
-    if (emailJobs.length === 0) {
-      document.getElementById("composeLog").innerHTML = '<div class="log-entry log-info">No new jobs with email to compose.</div>';
-      return;
-    }
     document.getElementById("btnComposeInGmail").style.display = "none";
     document.getElementById("btnAbortCompose").style.display = "inline-block";
     document.getElementById("composeLog").innerHTML = '';
-    if (port) port.postMessage({ action: "composeInGmail", jobs });
+    if (port) port.postMessage({ action: "enableComposeMode" });
   });
 
   document.getElementById("btnAbortCompose").addEventListener("click", () => {
-    if (port) port.postMessage({ action: "abortCompose" });
+    if (port) port.postMessage({ action: "disableComposeMode" });
+    document.getElementById("btnComposeInGmail").style.display = "inline-block";
+    document.getElementById("btnAbortCompose").style.display = "none";
   });
 
   document.getElementById("resumeFileInput").addEventListener("change", async (e) => {
@@ -238,8 +236,6 @@ function handleComposeProgress(msg) {
     entry.textContent = `[${msg.completed + 1}/${msg.total}] ${msg.current} — ${msg.subject || ''}`;
     log.appendChild(entry);
   } else if (msg.type === "done") {
-    document.getElementById("btnComposeInGmail").style.display = "inline-block";
-    document.getElementById("btnAbortCompose").style.display = "none";
     entry.classList.add("log-success");
     entry.textContent = msg.message;
     log.appendChild(entry);
@@ -268,3 +264,23 @@ function handleComposeProgress(msg) {
   }
   log.scrollTop = log.scrollHeight;
 }
+
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg.action === "composeLog") {
+    const log = document.getElementById("composeLog");
+    if (!log) return;
+    const entry = document.createElement("div");
+    entry.className = "log-entry";
+    if (msg.type === "info" || msg.type === "start" || msg.type === "wait" || msg.type === "skip") entry.classList.add("log-info");
+    else if (msg.type === "progress" || msg.type === "active") entry.classList.add("log-active");
+    else if (msg.type === "warn" || msg.type === "abort") entry.classList.add("log-warn");
+    else if (msg.type === "done" || msg.type === "success") entry.classList.add("log-success");
+    entry.textContent = msg.message || msg.text || '';
+    log.appendChild(entry);
+    log.scrollTop = log.scrollHeight;
+    if (msg.type === "done") {
+      Storage.getJobs().then(j => { allJobs = j; renderJobs(j); });
+      Storage.getStats().then(st => document.getElementById("dashComposed").textContent = st.composed || 0);
+    }
+  }
+});

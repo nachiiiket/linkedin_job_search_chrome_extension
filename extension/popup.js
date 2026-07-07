@@ -33,39 +33,37 @@ function setStatus(s) {
   document.getElementById("searchMode").disabled = s === "scraping";
 }
 
-function handleComposeProgress(msg) {
-  const log = document.getElementById("composeLogPopup");
+function setComposeUI(active) {
+  document.getElementById("btnComposePopup").style.display = active ? "none" : "flex";
+  document.getElementById("btnAbortComposePopup").style.display = active ? "flex" : "none";
+}
+
+function addLogEntry(containerId, msg) {
+  const log = document.getElementById(containerId);
+  if (!log) return;
   const entry = document.createElement("div");
   entry.className = "log-entry";
+  if (msg.type === "info" || msg.type === "start" || msg.type === "wait" || msg.type === "skip") entry.classList.add("log-info");
+  else if (msg.type === "progress" || msg.type === "active") entry.classList.add("log-active");
+  else if (msg.type === "warn" || msg.type === "abort") entry.classList.add("log-warn");
+  else if (msg.type === "done" || msg.type === "success") entry.classList.add("log-success");
+  entry.textContent = msg.text || msg.message || '';
+  log.appendChild(entry);
+  log.scrollTop = log.scrollHeight;
+}
+
+function handleComposeProgress(msg) {
+  addLogEntry("composeLog", msg);
+  if (msg.type === "abort") {
+    setComposeUI(false);
+    Storage.setComposeState(false);
+  }
   if (msg.type === "start") {
-    entry.classList.add("log-info");
-    entry.textContent = msg.message;
-    log.appendChild(entry);
-  } else if (msg.type === "progress") {
-    entry.classList.add("log-active");
-    entry.textContent = `[${msg.completed + 1}/${msg.total}] ${msg.current}`;
-    log.appendChild(entry);
-  } else if (msg.type === "wait") {
-    entry.classList.add("log-info");
-    entry.textContent = msg.message;
-    log.appendChild(entry);
-  } else if (msg.type === "warn") {
-    entry.classList.add("log-warn");
-    entry.textContent = msg.message;
-    log.appendChild(entry);
-  } else if (msg.type === "skip") {
-    entry.classList.add("log-info");
-    entry.textContent = msg.message;
-    log.appendChild(entry);
-  } else {
-    document.getElementById("btnComposePopup").style.display = "flex";
-    document.getElementById("btnAbortComposePopup").style.display = "none";
-    entry.classList.add(msg.type === "done" ? "log-success" : "log-warn");
-    entry.textContent = msg.message;
-    log.appendChild(entry);
+    setComposeUI(true);
+  }
+  if (msg.type === "done") {
     Storage.getStats().then(st => document.getElementById("statComposed").textContent = st.composed || 0);
   }
-  log.scrollTop = log.scrollHeight;
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -73,6 +71,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   const state = await Storage.getState();
   const stats = await Storage.getStats();
   updateUI(state, stats);
+
+  const composeActive = await Storage.getComposeState();
+  setComposeUI(composeActive);
 
   const prefs = await Storage.getPreferences();
   document.getElementById("onlyWithEmail").checked = prefs.onlyWithEmail === true;
@@ -87,6 +88,13 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("popupBatchSize").value = prefs.batchSize || 10;
   if (prefs.autoSendEnabled) document.getElementById("popupAutoSendOptions").style.display = "flex";
 
+  const r = await Storage.getResume();
+  document.getElementById("popupResumeStatus").textContent = r ? "Resume: " + r.name : "Resume: none";
+
+  document.getElementById("popupAutoSend").addEventListener("change", () => {
+    document.getElementById("popupAutoSendOptions").style.display = document.getElementById("popupAutoSend").checked ? "flex" : "none";
+  });
+
   document.getElementById("btnStart").addEventListener("click", async () => {
     prefs.searchMode = document.getElementById("searchMode").value;
     prefs.onlyWithEmail = document.getElementById("onlyWithEmail").checked;
@@ -95,6 +103,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     prefs.scrapeSpeed = document.getElementById("scrapeSpeed").value;
     await Storage.savePreferences(prefs);
     await Storage.setState({ stopRequested: false });
+    document.getElementById("scrapeLog").innerHTML = '';
     if (port) port.postMessage({ action: "startScraping", config: prefs });
   });
   document.getElementById("btnStop").addEventListener("click", () => {
@@ -102,19 +111,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
   document.getElementById("btnDashboard").addEventListener("click", () => {
     chrome.tabs.create({ url: "dashboard.html" });
-  });
-
-  document.getElementById("popupAutoSend").addEventListener("change", () => {
-    document.getElementById("popupAutoSendOptions").style.display = document.getElementById("popupAutoSend").checked ? "flex" : "none";
-  });
-
-  document.getElementById("btnDummyEmails").addEventListener("click", async () => {
-    const email = document.getElementById("popupDummyEmail").value.trim() || "test@example.com";
-    const jobs = await Storage.getJobs();
-    for (const j of jobs) j.email = email;
-    await chrome.storage.local.set({ jobs });
-    const st = await Storage.getStats();
-    document.getElementById("statEmail").textContent = st.withEmail;
   });
 
   document.getElementById("btnComposePopup").addEventListener("click", async () => {
@@ -125,42 +121,13 @@ document.addEventListener("DOMContentLoaded", async () => {
     prefs2.autoSendMode = document.getElementById("popupAutoSendMode").value;
     prefs2.batchSize = parseInt(document.getElementById("popupBatchSize").value) || 10;
     await Storage.savePreferences(prefs2);
-    const jobs = await Storage.getJobs();
-    const emailJobs = jobs.filter(j => j.email && j.email.trim() && j.composed !== "Yes");
-    if (emailJobs.length === 0) {
-      document.getElementById("composeLogPopup").innerHTML = '<div class="log-entry log-info">No new jobs with email to compose.</div>';
-      return;
-    }
-    document.getElementById("btnComposePopup").style.display = "none";
-    document.getElementById("btnAbortComposePopup").style.display = "flex";
-    document.getElementById("composeLogPopup").innerHTML = '';
-    if (port) port.postMessage({ action: "composeInGmail", jobs });
+    setComposeUI(true);
+    document.getElementById("composeLog").innerHTML = '';
+    if (port) port.postMessage({ action: "enableComposeMode" });
   });
-
-  document.getElementById("popupResumeFile").addEventListener("change", async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = async () => {
-      await Storage.saveResume({ name: file.name, type: file.type, data: reader.result });
-      document.getElementById("btnPopupClearResume").style.display = "inline-block";
-    };
-    reader.readAsDataURL(file);
-  });
-
-  document.getElementById("btnPopupClearResume").addEventListener("click", async () => {
-    await Storage.clearResume();
-    document.getElementById("popupResumeFile").value = "";
-    document.getElementById("btnPopupClearResume").style.display = "none";
-  });
-
-  (async () => {
-    const r = await Storage.getResume();
-    if (r) document.getElementById("btnPopupClearResume").style.display = "inline-block";
-  })();
 
   document.getElementById("btnAbortComposePopup").addEventListener("click", () => {
-    if (port) port.postMessage({ action: "abortCompose" });
+    if (port) port.postMessage({ action: "disableComposeMode" });
   });
 });
 
@@ -173,8 +140,9 @@ chrome.runtime.onMessage.addListener((msg) => {
   }
   if (msg.action === "scrapingComplete") setStatus("idle");
   if (msg.action === "log") {
-    const el = document.getElementById("logList");
-    const d = document.createElement("div"); d.className = "log-entry"; d.textContent = msg.text;
-    el.appendChild(d); el.scrollTop = el.scrollHeight;
+    addLogEntry("scrapeLog", { type: "info", text: msg.text });
+  }
+  if (msg.action === "composeLog") {
+    addLogEntry("composeLog", msg);
   }
 });

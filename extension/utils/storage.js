@@ -104,6 +104,33 @@ const Storage = {
     await chrome.storage.local.remove("resumeFile");
   },
 
+  async getSentEmails() {
+    const r = await chrome.storage.local.get("sentEmails");
+    return r.sentEmails || [];
+  },
+
+  async addSentEmail(email) {
+    const list = await this.getSentEmails();
+    const e = (email || '').trim().toLowerCase();
+    if (e && !list.includes(e)) {
+      list.push(e);
+      await chrome.storage.local.set({ sentEmails: list });
+    }
+  },
+
+  async clearSentEmails() {
+    await chrome.storage.local.remove("sentEmails");
+  },
+
+  async getComposeState() {
+    const r = await chrome.storage.local.get("composeActive");
+    return r.composeActive || false;
+  },
+
+  async setComposeState(active) {
+    await chrome.storage.local.set({ composeActive: !!active });
+  },
+
   async clearJobs() {
     await chrome.storage.local.set({ jobs: [] });
     await this.setState({ status: "idle", mode: "jobs", totalFound: 0 });
