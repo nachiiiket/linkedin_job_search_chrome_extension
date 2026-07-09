@@ -2,8 +2,14 @@
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #1a1a1a; background: #f4f5f7; }
 
 /* Popup */
-.popup-container { width: 380px; max-height: 500px; display: flex; flex-direction: column; background: #fff; }
+.popup-container { width: 640px; max-height: 500px; display: flex; flex-direction: column; background: #fff; }
 .popup-header { display: flex; align-items: center; gap: 10px; padding: 16px; border-bottom: 1px solid #e0e0e0; }
+.popup-body { display: flex; flex-direction: row; flex: 1; min-height: 0; }
+.popup-left { width: 340px; min-width: 340px; overflow-y: auto; }
+.popup-right { flex: 1; display: flex; flex-direction: column; border-left: 1px solid #e0e0e0; min-height: 0; }
+.popup-log-section { flex: 1; display: flex; flex-direction: column; min-height: 0; border-bottom: 1px solid #e0e0e0; }
+.popup-log-section:last-child { border-bottom: none; }
+.popup-log-header { padding: 6px 10px; font-size: 11px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid #e0e0e0; flex-shrink: 0; }
 .popup-icon { width: 32px; height: 32px; }
 .popup-header h1 { font-size: 18px; font-weight: 600; color: #0a66c2; }
 .status-section { padding: 16px; }
@@ -96,3 +102,40 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 /* Checkbox rows in popup */
 .mode-select label { font-size: 12px; color: #555; display: flex; align-items: center; gap: 4px; white-space: nowrap; }
 .mode-select input[type="checkbox"] { margin: 0; }
+
+/* Email compose section */
+.sidebar-divider { border: none; border-top: 1px solid #e0e0e0; margin: 16px 0; }
+.email-section h3 { font-size: 13px; font-weight: 700; color: #333; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+.email-section .form-group { margin-bottom: 10px; }
+.email-section .form-group label { display: block; font-size: 11px; font-weight: 600; color: #555; margin-bottom: 3px; }
+.email-section .form-group input[type="text"], .email-section .form-group textarea { width: 100%; padding: 6px 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 12px; font-family: inherit; }
+.email-section .form-group input[type="text"]:focus, .email-section .form-group textarea:focus { outline: none; border-color: #0a66c2; }
+.speed-select { width: 100%; padding: 6px 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 12px; font-family: inherit; }
+.compose-log { margin-top: 8px; max-height: 120px; overflow-y: auto; font-size: 11px; }
+.compose-log .log-entry { padding: 3px 6px; border-radius: 4px; margin-bottom: 2px; }
+.compose-log .log-info { background: #e8f0fe; color: #1a56db; }
+.compose-log .log-active { background: #fef7e0; color: #b8860b; }
+.compose-log .log-success { background: #e6f4ea; color: #1e7e34; }
+.compose-log .log-warn { background: #fce8e6; color: #c5221f; }
+.popup-log { flex: 1; overflow-y: auto; padding: 4px 8px; font-size: 11px; }
+.popup-log .log-entry { padding: 2px 4px; border-radius: 3px; margin-bottom: 1px; color: #555; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.popup-log .log-info { background: #e8f0fe; color: #1a56db; }
+.popup-log .log-active { background: #fef7e0; color: #b8860b; }
+.popup-log .log-success { background: #e6f4ea; color: #1e7e34; }
+.popup-log .log-warn { background: #fce8e6; color: #c5221f; }
+.composed-cell { text-align: center; font-size: 14px; color: #1e7e34; width: 36px; min-width: 36px; }
+.btn-xs { padding: 3px 8px; font-size: 10px; }
+.dummy-email-row { margin-top: 6px; display: flex; align-items: center; gap: 6px; }
+.dummy-email-input { flex: 1; min-width: 0; padding: 3px 6px; border: 1px solid #ddd; border-radius: 4px; font-size: 11px; }
+.dummy-email-input:focus { outline: none; border-color: #0a66c2; }
+
+/* Popup compose section */
+.popup-divider { border: none; border-top: 1px solid #e0e0e0; margin: 0 16px 8px; }
+.popup-compose { padding: 0 16px 8px; }
+.compose-header { font-size: 11px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+.compose-row { display: flex; gap: 6px; margin-bottom: 4px; }
+.compose-input { flex: 1; min-width: 0; padding: 4px 6px; border: 1px solid #ddd; border-radius: 4px; font-size: 11px; }
+.compose-input:focus { outline: none; border-color: #0a66c2; }
+.resume-row { display: flex; gap: 6px; align-items: center; }
+.resume-input { flex: 1; font-size: 11px; padding: 3px 0; }
+.file-status { font-size: 11px; color: #2e7d32; margin-top: 2px; }

@@ -4,7 +4,7 @@
 <body>
 <div class="dashboard-container">
   <header class="dashboard-header">
-    <h1><img src="icons/icon48.png" alt="" class="header-icon"> LinkedIn Job Finder</h1>
+    <h1><img src="icons/icon_new.png" alt="" class="header-icon"> LinkedIn Job Finder</h1>
     <div class="header-actions">
       <select id="dashSearchMode">
         <option value="jobs">Search Jobs</option>
@@ -39,9 +39,67 @@
         </div>
         <div class="form-group"><label>Max per run</label><input type="number" id="maxJobsPerRun" min="1" max="200" value="50"></div>
         <div class="form-group"><label>Speed</label><select id="scrapeSpeed"><option value="normal">Normal (random delays)</option><option value="fast">Fast (reduced delays)</option><option value="max">Max (no delays)</option></select></div>
-        <button id="btnSavePrefs" class="btn btn-primary">Save</button><span id="saveStatus" class="save-status"></span>
-      </div>
-    </aside>
+          <button id="btnSavePrefs" class="btn btn-primary">Save</button><span id="saveStatus" class="save-status"></span>
+
+          <hr class="sidebar-divider">
+          <div class="email-section">
+            <h3>Email Compose</h3>
+            <div class="form-group"><label>Subject</label>
+              <input type="text" id="emailSubject" placeholder="Enter email subject">
+            </div>
+            <div class="form-group"><label>Body</label>
+              <textarea id="emailBody" rows="5" placeholder="Enter email body"></textarea>
+            </div>
+            <div class="form-group"><label>Field delay (between To→Subj→Body→Resume)</label>
+              <select id="composeSpeed" class="speed-select">
+                <option value="3000">Slow (3s)</option>
+                <option value="2000">Medium (2s)</option>
+                <option value="1000" selected>Fast (1s)</option>
+                <option value="500">Faster (0.5s)</option>
+                <option value="0">Instant</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <hr style="border:none;border-top:1px solid #eee;margin:4px 0">
+              <label class="checkbox-label"><input type="checkbox" id="autoSendEnabled"> Auto-send</label>
+              <div id="autoSendOptions" style="display:none;margin-top:6px;font-size:12px">
+                <label>Mode</label>
+                <select id="autoSendMode" style="width:100%;margin-bottom:4px">
+                  <option value="realtime">Send as detected</option>
+                  <option value="batch">Batch send</option>
+                </select>
+                <label id="batchSizeLabel">Batch size</label>
+                <input type="number" id="batchSize" value="10" min="1" max="100" style="width:60px;margin-bottom:4px">
+                <label>Delay between sends</label>
+                <div style="display:flex;gap:4px;margin-top:2px">
+                  Min <input type="number" id="sendMinDelay" value="1000" min="0" step="100" style="width:70px">
+                  Max <input type="number" id="sendMaxDelay" value="3000" min="0" step="100" style="width:70px"> ms
+                </div>
+              </div>
+            </div>
+            <div class="form-group"><label>Skip email domains</label>
+              <input type="text" id="excludedEmailDomains" placeholder="gmail, proton, yahoo ..." style="width:100%;box-sizing:border-box;padding:4px 6px">
+            </div>
+            <div class="form-group"><label>Resume / Attachment</label>
+              <div class="resume-row">
+                <input type="file" id="resumeFileInput" accept=".pdf,.doc,.docx,.txt,.png,.jpg" class="resume-input">
+                <button id="btnClearResume" class="btn btn-outline btn-xs" style="display:none">Remove</button>
+              </div>
+              <div id="resumeStatus" class="file-status"></div>
+            </div>
+            <div class="form-row">
+              <button id="btnSaveEmailPrefs" class="btn btn-secondary">Save Email Prefs</button>
+              <span id="emailSaveStatus" class="save-status"></span>
+            </div>
+            <div class="form-row">
+              <button id="btnComposeInGmail" class="btn btn-primary">Compose in Gmail</button>
+              <button id="btnAbortCompose" class="btn btn-danger" style="display:none">Stop</button>
+            </div>
+            <div class="dummy-email-row"><input type="email" id="dummyEmailInput" placeholder="test@example.com" class="dummy-email-input" value="test@example.com"><button id="btnAddDummyEmails" class="btn btn-outline btn-xs">Set on all</button><span id="dummyStatus" class="save-status"></span></div>
+            <div id="composeLog" class="compose-log"></div>
+          </div>
+        </div>
+      </aside>
 
     <button id="btnExpandSidebar" class="sidebar-expand-btn" title="Show preferences">▶</button>
 
@@ -52,6 +110,7 @@
           <div class="stat"><span id="dashWithEmail" class="stat-number">0</span> With Email</div>
           <div class="stat"><span id="dashApplied" class="stat-number">0</span> Applied</div>
           <div class="stat"><span id="dashConnected" class="stat-number">0</span> Connected</div>
+          <div class="stat"><span id="dashComposed" class="stat-number">0</span> Composed</div>
         </div>
         <div class="tabs">
           <button id="tabAll" class="tab active">All</button>
@@ -60,7 +119,7 @@
         </div>
       </div>
       <div class="table-wrapper">
-        <table class="jobs-table"><thead><tr><th>Position</th><th>Company</th><th>Location</th><th>Poster</th><th>Email</th><th>Post/Job URL</th><th>Profile</th><th>Date</th></tr></thead>
+        <table class="jobs-table"><thead><tr><th>Position</th><th>Company</th><th>Location</th><th>Poster</th><th>Email</th><th>Cmp</th><th>Post/Job URL</th><th>Profile</th><th>Date</th></tr></thead>
         <tbody id="jobsBody"></tbody></table>
       </div>
       <p id="emptyMsg" class="empty-msg">No jobs tracked yet.</p>

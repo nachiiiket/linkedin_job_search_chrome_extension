@@ -4,11 +4,11 @@
   "version": "1.0.0",
   "description": "Scrape LinkedIn job listings, track applications, and export to Excel.",
   "permissions": ["storage", "downloads", "tabs", "notifications"],
-  "host_permissions": ["https://*.linkedin.com/*"],
+  "host_permissions": ["https://*.linkedin.com/*", "https://mail.google.com/*"],
   "action": {
     "default_popup": "popup.html",
     "default_title": "LinkedIn Job Finder",
-    "default_icon": "icons/icon48.png"
+    "default_icon": "icons/icon_new.png"
   },
   "background": {
     "service_worker": "background.js"
@@ -18,11 +18,16 @@
       "matches": ["https://*.linkedin.com/*"],
       "js": ["utils/storage.js", "utils/parser.js", "content.js"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://mail.google.com/*"],
+      "js": ["gmail-compose.js"],
+      "run_at": "document_idle"
     }
   ],
   "icons": {
-    "16": "icons/icon16.png",
-    "48": "icons/icon48.png",
-    "128": "icons/icon128.png"
+    "16": "icons/icon_new.png",
+    "48": "icons/icon_new.png",
+    "128": "icons/icon_new.png"
   }
 }

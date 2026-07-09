@@ -1,7 +1,7 @@
 const Exporter = {
   toCSV(jobs) {
     const cols = ["job_id", "date_found", "position", "company", "location",
-      "poster_name", "poster_title", "job_url", "email", "applied", "connection_sent", "notes"];
+      "poster_name", "poster_title", "job_url", "email", "applied", "connection_sent", "composed", "notes"];
     const esc = v => `"${(v || "").replace(/"/g, '""')}"`;
     const header = cols.join(",");
     const rows = jobs.map(j => cols.map(c => esc(j[c])).join(","));
@@ -11,7 +11,7 @@ const Exporter = {
   toXLS(jobs) {
     const cols = ["job_id", "date_found", "position", "company", "location",
       "poster_name", "poster_title", "poster_profile_url", "job_url",
-      "email", "applied", "connection_sent", "notes"];
+      "email", "applied", "connection_sent", "composed", "notes"];
     const escHtml = v => (v || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     const rows = jobs.map(j =>
       `<tr>${cols.map(c => `<td>${escHtml(j[c])}</td>`).join("")}</tr>`
