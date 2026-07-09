@@ -93,7 +93,7 @@ function getJobIds() {
 
 function scrollJobs() {
   const c = document.querySelector(".jobs-search-results-list, .scaffold-layout__list");
-  if (c) c.scrollTop = c.scrollHeight; else window.scrollBy(0, 400);
+  if (c) c.scrollTop = c.scrollHeight; else window.scrollTo(0, document.body.scrollHeight);
 }
 
 async function clickCard(jid) {
@@ -189,7 +189,7 @@ function postsUrl(query) {
 
 function simulateClick(el) {
   if (!el || el.offsetParent === null) return;
-  el.focus();
+  el.focus({ preventScroll: true });
   ["pointerover", "pointerenter", "pointerdown", "pointerup", "click"].forEach(evtName => {
     try { el.dispatchEvent(new PointerEvent(evtName, { bubbles: true, cancelable: true, pointerType: "mouse", view: window })); } catch(e) {}
   });
@@ -216,7 +216,6 @@ async function clickSeeMore(el) {
   const tryClick = async (b) => {
     if (!b || seen.has(b)) return;
     seen.add(b);
-    try { b.scrollIntoView({ block: "center" }); } catch(e) {}
     for (let attempt = 0; attempt < 2; attempt++) {
       simulateClick(b);
       await rand(400, 700);

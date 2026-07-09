@@ -70,6 +70,7 @@ function getPrefs() {
     onlyWithEmail: document.getElementById("onlyWithEmail").checked,
     postedWithinDays: parseInt(document.getElementById("postedWithinDays").value) || 1,
     maxJobsPerRun: parseInt(document.getElementById("maxJobsPerRun").value) || 50,
+    scrapeSpeed: document.getElementById("scrapeSpeed").value,
     targetPosterTitles: [], excludedKeywords: [],
     scrapeSpeed: document.getElementById("scrapeSpeed").value,
     searchMode: document.getElementById("dashSearchMode").value,

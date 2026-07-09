@@ -79,6 +79,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("onlyWithEmail").checked = prefs.onlyWithEmail === true;
   document.getElementById("jobsFirstPageOnly").checked = prefs.jobsFirstPageOnly !== false;
   document.getElementById("searchMode").value = prefs.searchMode || "jobs";
+  document.getElementById("scrapeSpeed").value = prefs.scrapeSpeed || "normal";
   document.getElementById("popupCompanies").value = (prefs.targetCompanies || []).join(", ");
   document.getElementById("popupSpeed").value = prefs.composeSpeed != null ? prefs.composeSpeed : 1000;
   document.getElementById("scrapeSpeed").value = prefs.scrapeSpeed || "normal";
@@ -99,6 +100,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     prefs.searchMode = document.getElementById("searchMode").value;
     prefs.onlyWithEmail = document.getElementById("onlyWithEmail").checked;
     prefs.jobsFirstPageOnly = document.getElementById("jobsFirstPageOnly").checked;
+    prefs.scrapeSpeed = document.getElementById("scrapeSpeed").value;
     prefs.targetCompanies = document.getElementById("popupCompanies").value.split(",").map(s => s.trim()).filter(Boolean);
     prefs.scrapeSpeed = document.getElementById("scrapeSpeed").value;
     await Storage.savePreferences(prefs);
