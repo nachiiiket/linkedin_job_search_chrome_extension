@@ -164,6 +164,7 @@ const LinkedinParser = {
     result.date_found = new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
     result.applied = "No";
     result.connection_sent = "No";
+    result.composed = "No";
     return result;
   }
 };

@@ -3,39 +3,88 @@
 <head><meta charset="UTF-8"><link rel="stylesheet" href="styles.css"></head>
 <body>
 <div class="popup-container">
-  <div class="popup-header"><img src="icons/icon48.png" alt="" class="popup-icon"><h1>LinkedIn Job Finder</h1></div>
-  <div class="status-section">
-    <div class="status-row"><span class="label">Status</span><span id="statusText" class="status-idle">Idle</span></div>
-    <div class="stats-row">
-      <div class="stat"><span id="statTotal" class="stat-number">0</span><span class="stat-label">Found</span></div>
-      <div class="stat"><span id="statApplied" class="stat-number">0</span><span class="stat-label">Applied</span></div>
-      <div class="stat"><span id="statConnected" class="stat-number">0</span><span class="stat-label">Connected</span></div>
+  <div class="popup-header"><img src="icons/icon_new.png" alt="" class="popup-icon" style="width:28px;height:28px"><h1>LinkedIn Job Finder</h1></div>
+  <div class="popup-body">
+    <div class="popup-left">
+      <div class="status-section">
+        <div class="status-row"><span class="label">Status</span><span id="statusText" class="status-idle">Idle</span></div>
+        <div class="stats-row">
+          <div class="stat"><span id="statTotal" class="stat-number">0</span><span class="stat-label">Found</span></div>
+          <div class="stat"><span id="statEmail" class="stat-number">0</span><span class="stat-label">Email</span></div>
+          <div class="stat"><span id="statComposed" class="stat-number">0</span><span class="stat-label">Sent</span></div>
+        </div>
+      </div>
+      <div class="mode-select">
+        <span class="label">Search</span>
+        <select id="searchMode">
+          <option value="jobs">Jobs</option>
+          <option value="posts">Posts</option>
+          <option value="both">Both</option>
+        </select>
+      </div>
+      <div class="mode-select">
+        <span class="label">Speed</span>
+        <select id="scrapeSpeed">
+          <option value="normal">Normal (random delays)</option>
+          <option value="fast">Fast (reduced delays)</option>
+          <option value="max">Max (no delays)</option>
+        </select>
+      </div>
+      <div class="mode-select">
+        <label><input type="checkbox" id="onlyWithEmail"> Only save with email</label>
+        <label><input type="checkbox" id="jobsFirstPageOnly" checked> First page only</label>
+      </div>
+      <div class="mode-select">
+        <span class="label">Target Companies</span>
+        <input type="text" id="popupCompanies" placeholder="Google, Microsoft..." style="width:100%;box-sizing:border-box;padding:4px 6px">
+      </div>
+      <div class="actions">
+        <button id="btnStart" class="btn btn-primary">Start Scraping</button>
+        <button id="btnStop" class="btn btn-danger" style="display:none">Stop</button>
+        <button id="btnDashboard" class="btn btn-secondary">Dashboard</button>
+      </div>
+      <hr class="popup-divider">
+      <div class="popup-compose">
+        <div class="compose-header">Email Compose</div>
+        <div class="compose-row">
+          <select id="popupSpeed" class="compose-input">
+            <option value="3000">Slow (3s)</option>
+            <option value="2000">Medium (2s)</option>
+            <option value="1000" selected>Fast (1s)</option>
+            <option value="500">Faster (0.5s)</option>
+            <option value="0">Instant</option>
+          </select>
+        </div>
+        <div class="compose-row">
+          <label class="checkbox-label"><input type="checkbox" id="popupAutoSend"> Auto-send</label>
+        </div>
+        <div class="compose-row" id="popupAutoSendOptions" style="display:none">
+          <select id="popupAutoSendMode" class="compose-input" style="flex:1">
+            <option value="realtime">Realtime</option>
+            <option value="batch">Batch</option>
+          </select>
+          <input type="number" id="popupBatchSize" value="10" min="1" max="100" class="compose-input" style="width:50px" title="Batch size">
+        </div>
+        <div class="compose-row" id="popupResumeStatus" style="font-size:11px;color:#555;padding:2px 0">Resume: none</div>
+        <div class="compose-row">
+          <input type="text" id="popupExcludedDomains" placeholder="Skip: gmail, proton, yahoo" class="compose-input" style="font-size:10px;padding:2px">
+        </div>
+        <div class="actions" style="padding:4px 0">
+          <button id="btnComposePopup" class="btn btn-primary" style="flex:1">Compose</button>
+          <button id="btnAbortComposePopup" class="btn btn-danger" style="display:none;flex:1">Stop</button>
+        </div>
+      </div>
     </div>
-  </div>
-  <div class="mode-select">
-    <span class="label">Search</span>
-    <select id="searchMode">
-      <option value="jobs">Jobs</option>
-      <option value="posts">Posts</option>
-      <option value="both">Both</option>
-    </select>
-  </div>
-  <div class="mode-select">
-    <label><input type="checkbox" id="onlyWithEmail"> Only save with email</label>
-    <label><input type="checkbox" id="jobsFirstPageOnly" checked> First page only</label>
-  </div>
-  <div class="mode-select">
-    <span class="label">Target Companies (optional, for post search)</span>
-    <input type="text" id="popupCompanies" placeholder="Google, Microsoft, NVIDIA..." style="width:100%;box-sizing:border-box;padding:4px 6px">
-  </div>
-  <div class="actions">
-    <button id="btnStart" class="btn btn-primary">Start Scraping</button>
-    <button id="btnStop" class="btn btn-danger" style="display:none">Stop</button>
-    <button id="btnDashboard" class="btn btn-secondary">Dashboard</button>
-  </div>
-  <div class="log-section">
-    <div class="log-header">Log</div>
-    <div id="logList" class="log-list"></div>
+    <div class="popup-right">
+      <div class="popup-log-section">
+        <div class="popup-log-header">Scraping</div>
+        <div id="scrapeLog" class="popup-log"></div>
+      </div>
+      <div class="popup-log-section">
+        <div class="popup-log-header">Email Compose</div>
+        <div id="composeLog" class="popup-log"></div>
+      </div>
+    </div>
   </div>
 </div>
 <script src="utils/storage.js"></script>
