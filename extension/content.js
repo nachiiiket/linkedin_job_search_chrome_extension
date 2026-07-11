@@ -32,8 +32,8 @@ function normalizeObfuscated(text) {
     .replace(/\s*\[dot\]\s*/gi, ".")
     .replace(/\s*\(dot\)\s*/gi, ".")
     .replace(/\s*\{dot\}\s*/gi, ".")
-    .replace(/\s+at\s+/gi, "@")
-    .replace(/\s+dot\s+/gi, ".")
+    .replace(/\s+at\s+(?![^@\n]{0,40}@)/gi, "@")
+    .replace(/\s+dot\s+(?![^@\n]{0,40}@)/gi, ".")
     .replace(/\s*\[remove\]\s*/gi, "")
     .replace(/\s*\(remove\)\s*/gi, "")
     .replace(/\s*\{remove\}\s*/gi, "");
@@ -183,8 +183,10 @@ async function scrapeJobs(cfg) {
 
 /* ====== POSTS SEARCH ====== */
 
-function postsUrl(query) {
-  return "https://www.linkedin.com/search/results/content/?keywords=" + encodeURIComponent(query) + "&origin=GLOBAL_SEARCH_HEADER&sortBy=%22date_posted%22";
+function postsUrl(query, dateFilter) {
+  let url = "https://www.linkedin.com/search/results/content/?keywords=" + encodeURIComponent(query) + "&origin=GLOBAL_SEARCH_HEADER&sortBy=%22date_posted%22";
+  if (dateFilter) url += "&datePosted=" + encodeURIComponent('["' + dateFilter + '"]');
+  return url;
 }
 
 function simulateClick(el) {
@@ -567,7 +569,7 @@ async function runPhase(cfg, phase, startIdx) {
 
   for (let i = startIdx; i < queries.length && !(await checkStop()); i++) {
     const q = queries[i];
-    const url = q._posts ? postsUrl(q.query) : jobsUrl(q.keyword, q.location, cfg);
+    const url = q._posts ? postsUrl(q.query, cfg.postDateFilter) : jobsUrl(q.keyword, q.location, cfg);
 
     await chrome.storage.local.set({ activeScrapeConfig: { phase, idx: i, url, config: cfg } });
     send("log", { text: "=== " + q.label + " ===" });

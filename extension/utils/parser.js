@@ -22,8 +22,8 @@ const LinkedinParser = {
       .replace(/\s*\[dot\]\s*/gi, ".")
       .replace(/\s*\(dot\)\s*/gi, ".")
       .replace(/\s*\{dot\}\s*/gi, ".")
-      .replace(/\s+at\s+/gi, "@")
-      .replace(/\s+dot\s+/gi, ".")
+      .replace(/\s+at\s+(?![^@\n]{0,40}@)/gi, "@")
+      .replace(/\s+dot\s+(?![^@\n]{0,40}@)/gi, ".")
       .replace(/\s*\[remove\]\s*/gi, "")
       .replace(/\s*\(remove\)\s*/gi, "")
       .replace(/\s*\{remove\}\s*/gi, "");
