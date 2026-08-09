@@ -38,6 +38,15 @@
         <span class="label">Target Companies</span>
         <input type="text" id="popupCompanies" placeholder="Google, Microsoft..." style="width:100%;box-sizing:border-box;padding:4px 6px">
       </div>
+      <div class="mode-select">
+        <span class="label">Post Date</span>
+        <select id="popupPostDateFilter">
+          <option value="">Any time</option>
+          <option value="past-24h">Past 24 hours</option>
+          <option value="past-week">Past week</option>
+          <option value="past-month">Past month</option>
+        </select>
+      </div>
       <div class="actions">
         <button id="btnStart" class="btn btn-primary">Start Scraping</button>
         <button id="btnStop" class="btn btn-danger" style="display:none">Stop</button>

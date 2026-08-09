@@ -22,6 +22,7 @@ const defaultPreferences = {
   jobsFirstPageOnly: true,
   onlyWithEmail: false,
   scrapeSpeed: "normal",
+  postDateFilter: "",
   emailSubject: "",
   emailBody: "",
   composeSpeed: 1000,

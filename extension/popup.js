@@ -81,8 +81,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("searchMode").value = prefs.searchMode || "jobs";
   document.getElementById("scrapeSpeed").value = prefs.scrapeSpeed || "normal";
   document.getElementById("popupCompanies").value = (prefs.targetCompanies || []).join(", ");
+  document.getElementById("popupPostDateFilter").value = prefs.postDateFilter || "";
   document.getElementById("popupSpeed").value = prefs.composeSpeed != null ? prefs.composeSpeed : 1000;
-  document.getElementById("scrapeSpeed").value = prefs.scrapeSpeed || "normal";
   document.getElementById("popupExcludedDomains").value = (prefs.excludedEmailDomains || []).join(", ");
   document.getElementById("popupAutoSend").checked = prefs.autoSendEnabled === true;
   document.getElementById("popupAutoSendMode").value = prefs.autoSendMode || "realtime";
@@ -102,6 +102,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     prefs.jobsFirstPageOnly = document.getElementById("jobsFirstPageOnly").checked;
     prefs.scrapeSpeed = document.getElementById("scrapeSpeed").value;
     prefs.targetCompanies = document.getElementById("popupCompanies").value.split(",").map(s => s.trim()).filter(Boolean);
+    prefs.postDateFilter = document.getElementById("popupPostDateFilter").value;
     prefs.scrapeSpeed = document.getElementById("scrapeSpeed").value;
     await Storage.savePreferences(prefs);
     await Storage.setState({ stopRequested: false });

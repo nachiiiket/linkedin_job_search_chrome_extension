@@ -33,6 +33,14 @@
           <div class="form-group half"><label><input type="checkbox" id="easyApplyOnly"> Easy Apply only</label></div>
           <div class="form-group half"><label>Posted within (days)</label><input type="number" id="postedWithinDays" min="1" max="30" value="1"></div>
         </div>
+        <div class="form-group"><label>Post search date filter</label>
+          <select id="postDateFilter">
+            <option value="">Any time</option>
+            <option value="past-24h">Past 24 hours</option>
+            <option value="past-week">Past week</option>
+            <option value="past-month">Past month</option>
+          </select>
+        </div>
         <div class="form-row">
           <div class="form-group half"><label><input type="checkbox" id="jobsFirstPageOnly" checked> Jobs first page only</label></div>
           <div class="form-group half"><label><input type="checkbox" id="onlyWithEmail"> Only save with email</label></div>
