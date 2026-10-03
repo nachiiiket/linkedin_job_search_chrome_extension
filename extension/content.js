@@ -1,5 +1,30 @@
 let shouldStop = false;
 let _speedFactor = 1;
+const _progress = { completed: 0, total: 0 };
+let _skipCurrent = false;
+let _skipResolve = null;
+
+function triggerSkip() {
+  _skipCurrent = true;
+  if (_skipResolve) {
+    const r = _skipResolve;
+    _skipResolve = null;
+    _skipCurrent = false;
+    r();
+  }
+}
+
+function broadcastProgress() {
+  send("progress", { completed: _progress.completed, total: _progress.total });
+}
+
+async function waitWhilePaused() {
+  while (!(await checkStop())) {
+    const r = await chrome.storage.local.get("scrapePaused");
+    if (!r.scrapePaused) return;
+    await new Promise(r2 => setTimeout(r2, 1000));
+  }
+}
 
 function rand(lo, hi) {
   const delay = (lo + Math.random() * (hi - lo)) * _speedFactor;
@@ -81,6 +106,9 @@ function isOnCorrectPage(targetUrl) {
     const tLoc = t.searchParams.get("location");
     const cLoc = c.searchParams.get("location");
     if (tLoc && tLoc !== cLoc) return false;
+    const tDate = t.searchParams.get("datePosted");
+    const cDate = c.searchParams.get("datePosted");
+    if ((tDate || "") !== (cDate || "")) return false;
     return true;
   } catch (e) {
     return window.location.href.includes(targetUrl.split("?")[0]);
@@ -152,14 +180,16 @@ async function scrapeJobs(cfg) {
   await rand(1500, 2500);
   let found = 0, pg = 1;
 
-  while (found < max && !(await checkStop())) {
+  while (found < max && !(await checkStop()) && !_skipCurrent) {
+    await waitWhilePaused();
     scrollJobs(); await rand(600, 1000);
     const ids = getJobIds();
     if (!ids.length) { send("log", { text: "No job cards on page " + pg }); break; }
     send("log", { text: "Jobs Page " + pg + ": " + ids.length + " cards" });
 
     for (const id of ids) {
-      if (await checkStop() || found >= max) break;
+      if (await checkStop() || _skipCurrent || found >= max) break;
+      await waitWhilePaused();
       const { jobs } = await chrome.storage.local.get("jobs");
       if ((jobs || []).some(j => j.job_id === id)) continue;
       if (!(await clickCard(id))) continue;
@@ -438,7 +468,8 @@ async function scrapePosts(cfg) {
     return [];
   };
 
-  while (!(await checkStop())) {
+  while (!(await checkStop()) && !_skipCurrent) {
+    await waitWhilePaused();
     scrollJobs(); await rand(1200, 1800);
     await expandAllOnPage();
     const els = getPosts();
@@ -465,7 +496,8 @@ async function scrapePosts(cfg) {
 
     let newOnPage = 0;
     for (const el of els) {
-      if (await checkStop()) break;
+      if (await checkStop() || _skipCurrent) break;
+      await waitWhilePaused();
 
       const urn = el.getAttribute("data-urn") || el.querySelector("a[data-urn]")?.getAttribute("data-urn") || "";
       if (urn && seenIds.has(urn)) continue;
@@ -540,13 +572,22 @@ function buildPhaseQueries(cfg, phase) {
   const qs = [];
   const companies = cfg.targetCompanies || [];
   if (phase === "posts") {
+    // "all" runs every date filter one by one; otherwise single filter
+    const filterValues = cfg.postDateFilter === "all"
+      ? ["", "past-24h", "past-week", "past-month"]
+      : [cfg.postDateFilter || ""];
+    const filterLabels = { "": "Any time", "past-24h": "Past 24h", "past-week": "Past week", "past-month": "Past month" };
     for (const role of cfg.jobRoles || []) {
       if (companies.length) {
         for (const company of companies) {
-          qs.push({ keyword: role, location: "", label: "Posts: " + role + " @ " + company, query: '"Hiring" AND "' + role + '" AND "' + company + '"', _posts: true });
+          for (const fv of filterValues) {
+            qs.push({ keyword: role, location: "", label: "Posts: " + role + " @ " + company + " [" + (filterLabels[fv] || "Any time") + "]", query: '"Hiring" AND "' + role + '" AND "' + company + '"', _posts: true, dateFilter: fv });
+          }
         }
       } else {
-        qs.push({ keyword: role, location: "", label: "Posts: " + role, query: '"Hiring" AND "' + role + '"', _posts: true });
+        for (const fv of filterValues) {
+          qs.push({ keyword: role, location: "", label: "Posts: " + role + " [" + (filterLabels[fv] || "Any time") + "]", query: '"Hiring" AND "' + role + '"', _posts: true, dateFilter: fv });
+        }
       }
     }
   } else {
@@ -568,21 +609,50 @@ async function runPhase(cfg, phase, startIdx) {
     : "[data-job-id], .jobs-search-results-list";
 
   for (let i = startIdx; i < queries.length && !(await checkStop()); i++) {
+    await waitWhilePaused();
     const q = queries[i];
-    const url = q._posts ? postsUrl(q.query, cfg.postDateFilter) : jobsUrl(q.keyword, q.location, cfg);
+    if (_skipCurrent) {
+      _skipCurrent = false;
+      send("log", { text: "Skipped: " + q.label });
+      _progress.completed++;
+      broadcastProgress();
+      continue;
+    }
+    const url = q._posts ? postsUrl(q.query, q.dateFilter !== undefined ? q.dateFilter : cfg.postDateFilter) : jobsUrl(q.keyword, q.location, cfg);
 
     await chrome.storage.local.set({ activeScrapeConfig: { phase, idx: i, url, config: cfg } });
     send("log", { text: "=== " + q.label + " ===" });
 
-    if (!isOnCorrectPage(url)) {
-      window.location.href = url;
-      const loaded = await waitEl(waitSel, 15000);
-      if (!loaded) { send("log", { text: "Navigation failed, aborting phase" }); return false; }
-      await rand(2000, 3000);
-    }
+    // race the whole query (navigation + scrape) against an instant skip signal
+    const skipPromise = new Promise(res => { _skipResolve = res; });
+    const runQuery = (async () => {
+      if (!isOnCorrectPage(url)) {
+        window.location.href = url;
+        const loaded = await waitEl(waitSel, 15000);
+        if (!loaded) return { failed: true };
+        await rand(2000, 3000);
+      }
+      return { found: await scraper(cfg) };
+    })();
+    const rq = await Promise.race([runQuery, skipPromise.then(() => ({ skipped: true }))]);
+    _skipResolve = null;
 
-    const found = await scraper(cfg);
-    send("log", { text: "=== Complete: " + found + " items ===" });
+    if (rq.skipped) {
+      send("log", { text: "Skipped by user: " + q.label });
+      _progress.completed++;
+      broadcastProgress();
+      const nq = queries[i + 1];
+      if (nq) {
+        const nurl = nq._posts ? postsUrl(nq.query, nq.dateFilter !== undefined ? nq.dateFilter : cfg.postDateFilter) : jobsUrl(nq.keyword, nq.location, cfg);
+        await chrome.storage.local.set({ activeScrapeConfig: { phase, idx: i + 1, url: nurl, config: cfg } });
+      }
+      continue;
+    }
+    if (rq.failed) { send("log", { text: "Navigation failed, aborting phase" }); return false; }
+    if (_skipCurrent) _skipCurrent = false;
+    send("log", { text: "=== Complete: " + rq.found + " items ===" });
+    _progress.completed++;
+    broadcastProgress();
   }
   return true;
 }
@@ -591,6 +661,8 @@ async function runPhase(cfg, phase, startIdx) {
 // doesn't immediately abort a fresh start
 async function runAll(cfg) {
   shouldStop = false;
+  _skipCurrent = false;
+  await chrome.storage.local.set({ scrapePaused: false });
   const speed = cfg.scrapeSpeed || "normal";
   if (speed === "fast") _speedFactor = 0.35;
   else if (speed === "max") _speedFactor = 0;
@@ -602,10 +674,20 @@ async function runAll(cfg) {
 
   const phases = mode === "both" ? ["jobs", "posts"] : [mode === "posts" ? "posts" : "jobs"];
 
+  const phaseCounts = phases.map(p => buildPhaseQueries(cfg, p).length);
+  _progress.total = phaseCounts.reduce((a, b) => a + b, 0);
+  _progress.completed = 0;
+
   const saved = await chrome.storage.local.get("activeScrapeConfig");
   let sc = saved.activeScrapeConfig;
   let phaseStart = sc ? phases.indexOf(sc.phase) : 0;
   if (phaseStart < 0) phaseStart = 0;
+
+  if (sc && phases.includes(sc.phase)) {
+    for (let i = 0; i < phases.indexOf(sc.phase); i++) _progress.completed += phaseCounts[i];
+    _progress.completed += (sc.idx || 0);
+  }
+  broadcastProgress();
 
   for (let p = phaseStart; p < phases.length && !(await checkStop()); p++) {
     const phase = phases[p];
@@ -618,6 +700,8 @@ async function runAll(cfg) {
   await chrome.storage.local.remove("activeScrapeConfig");
   await Storage.setState({ status: "idle", mode, totalFound: 0, stopRequested: false });
   shouldStop = false;
+  _progress.completed = _progress.total;
+  broadcastProgress();
   send("scrapingComplete", {});
 }
 
@@ -632,6 +716,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
   if (msg.action === "stopScraping") { sendResponse({ ok: true }); shouldStop = true; Storage.setState({ stopRequested: true }); }
+  if (msg.action === "skipQuery") { sendResponse({ ok: true }); triggerSkip(); }
+  if (msg.action === "pauseScraping") { sendResponse({ ok: true }); chrome.storage.local.set({ scrapePaused: true }); }
+  if (msg.action === "resumeScraping") { sendResponse({ ok: true }); chrome.storage.local.set({ scrapePaused: false }); }
   if (msg.action === "ping") { sendResponse({ ok: true }); }
 });
 
