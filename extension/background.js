@@ -297,8 +297,13 @@ async function startScraping(config) {
 
 async function stopScraping() {
   if (activeTabId) { chrome.tabs.sendMessage(activeTabId, { action: "stopScraping" }).catch(() => {}); }
+  await chrome.storage.local.set({ scrapePaused: false });
   await Storage.setState({ status: "idle", mode: "jobs", totalFound: 0, stopRequested: false });
   notify("Scraping Stopped", "The scraper was stopped.");
+}
+
+function broadcastScrapeControl(type) {
+  chrome.runtime.sendMessage({ action: "scrapeControl", type }).catch(() => {});
 }
 
 chrome.runtime.onConnect.addListener(port => {
@@ -306,6 +311,9 @@ chrome.runtime.onConnect.addListener(port => {
     port.onMessage.addListener(async msg => {
       if (msg.action === "startScraping") { await startScraping(msg.config); port.postMessage({ action: "started" }); }
       if (msg.action === "stopScraping") { await stopScraping(); port.postMessage({ action: "stopped" }); }
+      if (msg.action === "skipQuery") { if (activeTabId) chrome.tabs.sendMessage(activeTabId, { action: "skipQuery" }).catch(() => {}); broadcastScrapeControl("skipped"); }
+      if (msg.action === "pauseScraping") { await chrome.storage.local.set({ scrapePaused: true }); if (activeTabId) chrome.tabs.sendMessage(activeTabId, { action: "pauseScraping" }).catch(() => {}); broadcastScrapeControl("paused"); }
+      if (msg.action === "resumeScraping") { await chrome.storage.local.set({ scrapePaused: false }); if (activeTabId) chrome.tabs.sendMessage(activeTabId, { action: "resumeScraping" }).catch(() => {}); broadcastScrapeControl("resumed"); }
       if (msg.action === "getState") { const s = await Storage.getState(); const st = await Storage.getStats(); port.postMessage({ action: "state", state: s, stats: st }); }
       if (msg.action === "enableComposeMode") {
         composeAbort = false;
@@ -330,6 +338,9 @@ chrome.runtime.onConnect.addListener(port => {
     port.onMessage.addListener(async msg => {
       if (msg.action === "startScraping") { await startScraping(msg.config); }
       if (msg.action === "stopScraping") { await stopScraping(); }
+      if (msg.action === "skipQuery") { if (activeTabId) chrome.tabs.sendMessage(activeTabId, { action: "skipQuery" }).catch(() => {}); broadcastScrapeControl("skipped"); }
+      if (msg.action === "pauseScraping") { await chrome.storage.local.set({ scrapePaused: true }); if (activeTabId) chrome.tabs.sendMessage(activeTabId, { action: "pauseScraping" }).catch(() => {}); broadcastScrapeControl("paused"); }
+      if (msg.action === "resumeScraping") { await chrome.storage.local.set({ scrapePaused: false }); if (activeTabId) chrome.tabs.sendMessage(activeTabId, { action: "resumeScraping" }).catch(() => {}); broadcastScrapeControl("resumed"); }
       if (msg.action === "getState") { const s = await Storage.getState(); const st = await Storage.getStats(); port.postMessage({ action: "state", state: s, stats: st }); }
       if (msg.action === "getJobs") { const j = await Storage.getJobs(); port.postMessage({ action: "jobs", jobs: j }); }
       if (msg.action === "exportCSV") { Exporter.downloadCSV(await Storage.getJobs()); }

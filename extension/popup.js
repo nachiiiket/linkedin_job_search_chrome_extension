@@ -20,9 +20,46 @@ function updateUI(state, stats) {
   document.getElementById("btnStart").style.display = state.status === "scraping" ? "none" : "block";
   document.getElementById("btnStop").style.display = state.status === "scraping" ? "block" : "none";
   document.getElementById("searchMode").disabled = state.status === "scraping";
+  setScrapeControls(state.status === "scraping");
+  const pauseBtn = document.getElementById("btnPause");
+  pauseBtn.textContent = "Pause";
+  pauseBtn.classList.remove("btn-primary");
   if (state.mode === "posts") document.getElementById("searchMode").value = "posts";
   else if (state.mode === "both") document.getElementById("searchMode").value = "both";
   else document.getElementById("searchMode").value = "jobs";
+}
+
+function handleScrapeProgress(p) {
+  const row = document.getElementById("scrapeProgressRow");
+  const bar = document.getElementById("scrapeProgressBar");
+  const text = document.getElementById("scrapeProgressText");
+  if (!row || !bar) return;
+  const total = p.total || 0;
+  row.style.display = total > 0 ? "flex" : "none";
+  const pct = total > 0 ? Math.round((p.completed / total) * 100) : 0;
+  bar.style.width = pct + "%";
+  text.textContent = p.completed + "/" + total;
+}
+
+function setScrapeControls(scraping) {
+  const d = scraping ? "block" : "none";
+  document.getElementById("btnSkip").style.display = d;
+  document.getElementById("btnPause").style.display = d;
+}
+
+function handleScrapeControl(type) {
+  const btn = document.getElementById("btnPause");
+  if (type === "paused") {
+    btn.textContent = "Resume";
+    btn.classList.add("btn-primary");
+    addLogEntry("scrapeLog", { type: "warn", text: "Scraping paused" });
+  } else if (type === "resumed") {
+    btn.textContent = "Pause";
+    btn.classList.remove("btn-primary");
+    addLogEntry("scrapeLog", { type: "info", text: "Scraping resumed" });
+  } else if (type === "skipped") {
+    addLogEntry("scrapeLog", { type: "warn", text: "Skip requested - moving to next query" });
+  }
 }
 
 function setStatus(s) {
@@ -31,6 +68,12 @@ function setStatus(s) {
   document.getElementById("btnStart").style.display = s === "scraping" ? "none" : "block";
   document.getElementById("btnStop").style.display = s === "scraping" ? "block" : "none";
   document.getElementById("searchMode").disabled = s === "scraping";
+  setScrapeControls(s === "scraping");
+  if (s !== "scraping") {
+    const btn = document.getElementById("btnPause");
+    btn.textContent = "Pause";
+    btn.classList.remove("btn-primary");
+  }
 }
 
 function setComposeUI(active) {
@@ -107,10 +150,18 @@ document.addEventListener("DOMContentLoaded", async () => {
     await Storage.savePreferences(prefs);
     await Storage.setState({ stopRequested: false });
     document.getElementById("scrapeLog").innerHTML = '';
+    handleScrapeProgress({ completed: 0, total: 0 });
     if (port) port.postMessage({ action: "startScraping", config: prefs });
   });
   document.getElementById("btnStop").addEventListener("click", () => {
     if (port) port.postMessage({ action: "stopScraping" });
+  });
+  document.getElementById("btnSkip").addEventListener("click", () => {
+    if (port) port.postMessage({ action: "skipQuery" });
+  });
+  document.getElementById("btnPause").addEventListener("click", () => {
+    const paused = document.getElementById("btnPause").textContent === "Resume";
+    if (port) port.postMessage({ action: paused ? "resumeScraping" : "pauseScraping" });
   });
   document.getElementById("btnDashboard").addEventListener("click", () => {
     chrome.tabs.create({ url: "dashboard.html" });
@@ -141,7 +192,9 @@ chrome.runtime.onMessage.addListener((msg) => {
     document.getElementById("statComposed").textContent = msg.stats.composed;
     chrome.action.setBadgeText({ text: String(msg.stats.total) });
   }
-  if (msg.action === "scrapingComplete") setStatus("idle");
+  if (msg.action === "scrapingComplete") { setStatus("idle"); handleScrapeProgress({ completed: 0, total: 0 }); }
+  if (msg.action === "progress") handleScrapeProgress(msg);
+  if (msg.action === "scrapeControl") handleScrapeControl(msg.type);
   if (msg.action === "log") {
     addLogEntry("scrapeLog", { type: "info", text: msg.text });
   }

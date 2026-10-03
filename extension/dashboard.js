@@ -20,7 +20,13 @@ function updateState(state, stats) {
   const s = state.status === "scraping";
   document.getElementById("btnStart").style.display = s ? "none" : "inline-block";
   document.getElementById("btnStop").style.display = s ? "inline-block" : "none";
+  document.getElementById("btnSkip").style.display = s ? "inline-block" : "none";
+  document.getElementById("btnPause").style.display = s ? "inline-block" : "none";
   document.getElementById("dashSearchMode").disabled = s;
+  if (!s) {
+    document.getElementById("btnPause").textContent = "Pause";
+    document.getElementById("btnPause").classList.remove("btn-primary");
+  }
   if (state.mode === "posts") document.getElementById("dashSearchMode").value = "posts";
   else if (state.mode === "both") document.getElementById("dashSearchMode").value = "both";
   else document.getElementById("dashSearchMode").value = "jobs";
@@ -137,8 +143,13 @@ document.addEventListener("DOMContentLoaded", async () => {
   const ca = await Storage.getComposeState();
   if (ca) { document.getElementById("btnComposeInGmail").style.display = "none"; document.getElementById("btnAbortCompose").style.display = "inline-block"; }
 
-  document.getElementById("btnStart").addEventListener("click", () => { const p = getPrefs(); if (port) port.postMessage({ action: "startScraping", config: p }); });
+  document.getElementById("btnStart").addEventListener("click", () => { const p = getPrefs(); handleScrapeProgress({ completed: 0, total: 0 }); if (port) port.postMessage({ action: "startScraping", config: p }); });
   document.getElementById("btnStop").addEventListener("click", () => { if (port) port.postMessage({ action: "stopScraping" }); });
+  document.getElementById("btnSkip").addEventListener("click", () => { if (port) port.postMessage({ action: "skipQuery" }); });
+  document.getElementById("btnPause").addEventListener("click", () => {
+    const paused = document.getElementById("btnPause").textContent === "Resume";
+    if (port) port.postMessage({ action: paused ? "resumeScraping" : "pauseScraping" });
+  });
   document.getElementById("btnSavePrefs").addEventListener("click", () => { const p = getPrefs(); if (port) port.postMessage({ action: "savePreferences", prefs: p }); });
   document.getElementById("btnSaveEmailPrefs").addEventListener("click", () => {
     const p = getPrefs();
@@ -267,7 +278,32 @@ function handleComposeProgress(msg) {
   log.scrollTop = log.scrollHeight;
 }
 
+function handleScrapeProgress(p) {
+  const row = document.getElementById("scrapeProgressRow");
+  const bar = document.getElementById("scrapeProgressBar");
+  const text = document.getElementById("scrapeProgressText");
+  if (!row || !bar) return;
+  const total = p.total || 0;
+  row.style.display = total > 0 ? "flex" : "none";
+  const pct = total > 0 ? Math.round((p.completed / total) * 100) : 0;
+  bar.style.width = pct + "%";
+  text.textContent = p.completed + "/" + total;
+}
+
 chrome.runtime.onMessage.addListener((msg) => {
+  if (msg.action === "progress") handleScrapeProgress(msg);
+  if (msg.action === "scrapingComplete") handleScrapeProgress({ completed: 0, total: 0 });
+  if (msg.action === "scrapeControl") {
+    const btn = document.getElementById("btnPause");
+    if (!btn) return;
+    if (msg.type === "paused") {
+      btn.textContent = "Resume";
+      btn.classList.add("btn-primary");
+    } else if (msg.type === "resumed") {
+      btn.textContent = "Pause";
+      btn.classList.remove("btn-primary");
+    }
+  }
   if (msg.action === "composeLog") {
     const log = document.getElementById("composeLog");
     if (!log) return;
