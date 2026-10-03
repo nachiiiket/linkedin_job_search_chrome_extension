@@ -361,6 +361,31 @@ function extractPosterFromFeed(el) {
   return r;
 }
 
+/* ====== RIGHT-CLICK EMAIL CONTEXT ====== */
+let _manualContext = null;
+
+// On right-click, synchronously resolve the feed card and poster info from the
+// clicked element (if any). No menu clicks, no clipboard, no async - the post
+// url falls back to the current page URL, which the background overrides.
+function captureMenuContext(e) {
+  const node = e.target instanceof Element ? e.target : (e.target ? e.target.parentElement : null);
+  const card = node ? node.closest(".feed-shared-update-v2, [data-urn*='activity'], li.reusable-search__result-container") : null;
+  let poster = { poster_name: "", poster_title: "", poster_profile_url: "" };
+  let position = "", company = "";
+
+  if (card) {
+    poster = extractPosterFromFeed(card);
+  } else {
+    const p = posterInfo();
+    if (p.poster_name) poster = p;
+    try { const t = document.querySelector(".jobs-unified-top-card__job-title h1, .jobs-unified-top-card__job-title"); if (t) position = t.innerText.trim(); } catch (_) {}
+    try { const c = document.querySelector(".jobs-unified-top-card__company-name"); if (c) company = c.innerText.trim(); } catch (_) {}
+  }
+  _manualContext = { url: window.location.href.split("?")[0], poster_name: poster.poster_name, poster_title: poster.poster_title, poster_profile_url: poster.poster_profile_url, position, company };
+}
+
+document.addEventListener("contextmenu", captureMenuContext, true);
+
 function findUrnInEl(el) {
   if (!el) return "";
   const fromAttr = el.getAttribute("data-urn") || "";
@@ -719,6 +744,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === "skipQuery") { sendResponse({ ok: true }); triggerSkip(); }
   if (msg.action === "pauseScraping") { sendResponse({ ok: true }); chrome.storage.local.set({ scrapePaused: true }); }
   if (msg.action === "resumeScraping") { sendResponse({ ok: true }); chrome.storage.local.set({ scrapePaused: false }); }
+  if (msg.action === "getContextMenuInfo") { sendResponse({ context: _manualContext || {} }); }
   if (msg.action === "ping") { sendResponse({ ok: true }); }
 });
 

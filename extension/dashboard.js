@@ -1,4 +1,4 @@
-let port = null, allJobs = [], currentFilter = "all";
+let port = null, allJobs = [], currentFilter = "all", manualEmails = [];
 function connect() { port = chrome.runtime.connect({ name: "dashboard" }); port.onMessage.addListener(handle); }
 
 function handle(msg) {
@@ -128,8 +128,50 @@ function renderJobs(jobs) {
 function switchTab(tab) {
   document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
   document.getElementById(tab).classList.add("active");
-  currentFilter = tab === "tabAll" ? "all" : tab === "tabWithEmail" ? "withEmail" : "withoutEmail";
+  currentFilter = tab === "tabAll" ? "all" : tab === "tabWithEmail" ? "withEmail" : tab === "tabWithoutEmail" ? "withoutEmail" : "manual";
+  const isManual = currentFilter === "manual";
+  document.getElementById("jobsTableWrap").style.display = isManual ? "none" : "block";
+  document.getElementById("emptyMsg").style.display = isManual ? "none" : "block";
+  const ms = document.getElementById("manualSection");
+  if (ms) ms.style.display = isManual ? "block" : "none";
   renderJobs(allJobs);
+  renderManualEmails();
+}
+
+function renderManualEmails() {
+  const tb = document.getElementById("manualBody");
+  const em = document.getElementById("manualEmptyMsg");
+  if (!tb) return;
+  tb.innerHTML = "";
+  if (!manualEmails.length) { em.style.display = "block"; return; }
+  em.style.display = "none";
+  manualEmails.slice().reverse().forEach(m => {
+    const tr = document.createElement("tr");
+
+    const emailTd = document.createElement("td"); emailTd.className = "email-cell"; emailTd.textContent = m.email || "-"; tr.appendChild(emailTd);
+
+    const recTd = document.createElement("td");
+    recTd.textContent = m.poster_name ? m.poster_name + (m.poster_title ? " - " + m.poster_title : "") : "-";
+    tr.appendChild(recTd);
+
+    const coTd = document.createElement("td");
+    const coParts = [m.company, m.position].filter(Boolean).join(" - ");
+    coTd.textContent = coParts || "-";
+    tr.appendChild(coTd);
+
+    const urlTd = document.createElement("td");
+    if (m.postUrl) { const a = document.createElement("a"); a.href = m.postUrl; a.textContent = "Open Post"; a.target = "_blank"; urlTd.appendChild(a); }
+    else urlTd.textContent = "-";
+    tr.appendChild(urlTd);
+
+    const tTd = document.createElement("td"); tTd.textContent = (m.status === "sent" ? m.sentAt : m.createdAt) || "-"; tr.appendChild(tTd);
+
+    const sTd = document.createElement("td"); sTd.textContent = m.status === "sent" ? "Sent" : "Queued";
+    if (m.status === "sent") sTd.className = "composed-cell";
+    tr.appendChild(sTd);
+
+    tb.appendChild(tr);
+  });
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -139,6 +181,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   allJobs = jobs;
   updateState(s, st);
   renderJobs(jobs);
+  manualEmails = await Storage.getManualEmails();
+  renderManualEmails();
   if (port) port.postMessage({ action: "getPreferences" });
   const ca = await Storage.getComposeState();
   if (ca) { document.getElementById("btnComposeInGmail").style.display = "none"; document.getElementById("btnAbortCompose").style.display = "inline-block"; }
@@ -176,6 +220,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("tabAll").addEventListener("click", () => switchTab("tabAll"));
   document.getElementById("tabWithEmail").addEventListener("click", () => switchTab("tabWithEmail"));
   document.getElementById("tabWithoutEmail").addEventListener("click", () => switchTab("tabWithoutEmail"));
+  document.getElementById("tabManual").addEventListener("click", () => switchTab("tabManual"));
 
   document.getElementById("btnComposeInGmail").addEventListener("click", async () => {
     const prefs = getPrefs();
@@ -293,6 +338,9 @@ function handleScrapeProgress(p) {
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.action === "progress") handleScrapeProgress(msg);
   if (msg.action === "scrapingComplete") handleScrapeProgress({ completed: 0, total: 0 });
+  if (msg.action === "manualEmailsUpdated") {
+    Storage.getManualEmails().then(m => { manualEmails = m; renderManualEmails(); });
+  }
   if (msg.action === "scrapeControl") {
     const btn = document.getElementById("btnPause");
     if (!btn) return;
