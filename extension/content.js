@@ -555,17 +555,21 @@ function setEditableText(editable, text) {
       } catch (e) {}
     }
 
-    // 3) Simulate typing via execCommand (fires native beforeinput/input).
+    // 3) Simulate typing via execCommand on the element's OWN document
+    //    (fires native beforeinput/input). Cross-frame safe.
     try {
+      const edDoc = editable.ownerDocument || document;
+      const edWin = edDoc.defaultView || window;
+      if (edWin !== window) { try { edWin.focus && edWin.focus(); } catch (e) {} editable.focus(); }
       if (editable.isContentEditable || editable.hasAttribute("contenteditable") || editable.getAttribute("role") === "textbox") {
-        const sel = window.getSelection();
-        const range = document.createRange();
+        const sel = edWin.getSelection();
+        const range = edDoc.createRange();
         range.selectNodeContents(editable);
         sel.removeAllRanges();
         sel.addRange(range);
       }
       let inserted = false;
-      try { inserted = document.execCommand("insertText", false, text); } catch (e) {}
+      try { inserted = edDoc.execCommand("insertText", false, text); } catch (e) {}
       if (inserted !== false) {
         fireInput();
         if (readValue() === text || readValue().includes(text)) return true;
