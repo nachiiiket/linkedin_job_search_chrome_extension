@@ -447,22 +447,44 @@ function ljfLog(msg) {
 
 /* ====== PASTE TEMPLATE TARGETING ====== */
 
-function getEditableTarget() {
-  const candidates = [];
-  if (_manualTarget) {
-    if (_manualTarget.isConnected && _manualTarget.closest) candidates.push(_manualTarget.closest("textarea, input, [contenteditable='true'], [contenteditable='plaintext-only'], [role='textbox'], [role='combobox']") );
+// LinkedIn renders some flows (connection-note modal, messaging) inside a
+// same-origin iframe hosted by #interop-outlet. Events from that iframe bubble
+// up to the top document on a *copy* of the node (the <iframe> host), so plain
+// document.querySelector misses the real field. Search same-origin iframes too.
+function eachFrameDoc() {
+  const docs = [document];
+  for (const f of Array.from(document.querySelectorAll("iframe, frame"))) {
+    try { if (f.contentDocument && f.contentDocument.body) docs.push(f.contentDocument); } catch (e) {}
   }
-  const ae = document.activeElement;
-  if (ae && ae.isConnected && ae.closest) candidates.push(ae.closest("textarea, input, [contenteditable='true'], [contenteditable='plaintext-only'], [role='textbox'], [role='combobox']"));
-  return candidates.find(c => c && (c.tagName === "TEXTAREA" || (c.tagName === "INPUT" && !["checkbox", "radio", "file", "submit", "button"].includes(c.type)) || c.isContentEditable || c.hasAttribute("contenteditable") || c.getAttribute("role") === "textbox")) || null;
+  return docs;
+}
+function queryInFrames(sel) {
+  for (const d of eachFrameDoc()) {
+    const el = d.querySelector(sel);
+    if (el) return el;
+  }
+  return null;
+}
+
+function getEditableTarget() {
+  const docFor = (n) => n && n.ownerDocument ? n.ownerDocument : document;
+  const isOk = (c) => c && (c.tagName === "TEXTAREA" || (c.tagName === "INPUT" && !["checkbox", "radio", "file", "submit", "button"].includes(c.type)) || c.isContentEditable || c.hasAttribute("contenteditable") || c.getAttribute("role") === "textbox");
+  const resolve = (n) => n && n.isConnected && n.closest ? n.closest("textarea, input, [contenteditable='true'], [contenteditable='plaintext-only'], [role='textbox'], [role='combobox'], form textarea") : null;
+  const candidates = [];
+  if (_manualTarget) candidates.push(resolve(_manualTarget));
+  for (const d of eachFrameDoc()) {
+    const ae = d.activeElement;
+    if (ae && ae.isConnected) { const r = resolve(ae); if (r) candidates.push(r); }
+  }
+  return candidates.find(isOk) || null;
 }
 
 // Fallback target locators in case the right-clicked node was re-rendered.
 function findNoteField() {
-  return document.querySelector('textarea.connect-button-send-invite__custom-message, #custom-message[name="message"], .send-invite textarea, div[role="dialog"][data-test-modal*="send"] textarea');
+  return queryInFrames('textarea.connect-button-send-invite__custom-message, #custom-message[name="message"], .send-invite textarea, div[role="dialog"][data-test-modal*="send"] textarea');
 }
 function findDmComposer() {
-  return document.querySelector('.msg-overlay-conversation-bubble [role="textbox"], .msg-form__msg-content-container [role="textbox"], div[role="dialog"] [contenteditable="true"][role="textbox"]');
+  return queryInFrames('.msg-overlay-conversation-bubble [role="textbox"], .msg-form__msg-content-container [role="textbox"], div[role="dialog"] [contenteditable="true"][role="textbox"]');
 }
 
 function readFieldValue(el) {
