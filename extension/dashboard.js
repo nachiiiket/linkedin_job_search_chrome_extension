@@ -1,5 +1,19 @@
 let port = null, allJobs = [], currentFilter = "all", manualEmails = [];
-function connect() { port = chrome.runtime.connect({ name: "dashboard" }); port.onMessage.addListener(handle); }
+function connect() {
+  if (port) { try { port.disconnect(); } catch (e) {} }
+  const p = chrome.runtime.connect({ name: "dashboard" });
+  port = p;
+  p.onDisconnect.addListener(() => { if (port === p) port = null; });
+  p.onMessage.addListener(handle);
+}
+function send(msg) {
+  try {
+    if (!port) connect();
+    port.postMessage(msg);
+  } catch (e) {
+    try { connect(); if (port) port.postMessage(msg); } catch (e2) { console.error(e2); }
+  }
+}
 
 function handle(msg) {
   if (msg.action === "state") updateState(msg.state, msg.stats);
@@ -10,7 +24,9 @@ function handle(msg) {
     setTimeout(() => document.getElementById("saveStatus").textContent = "", 2000);
     document.getElementById("emailSaveStatus").textContent = "Saved!"; 
     setTimeout(() => document.getElementById("emailSaveStatus").textContent = "", 2000);
-    if (port) port.postMessage({ action: "getPreferences" });
+    document.getElementById("dmSaveStatus").textContent = "Saved!"; 
+    setTimeout(() => document.getElementById("dmSaveStatus").textContent = "", 2000);
+    send({ action: "getPreferences" });
   }
   if (msg.action === "cleared") { allJobs = []; renderJobs([]); updateState({ status: "idle" }, { total: 0, applied: 0, connected: 0 }); }
   if (msg.action === "composeProgress") handleComposeProgress(msg);
@@ -55,6 +71,9 @@ function populateForm(p) {
   document.getElementById("dashSearchMode").value = p.searchMode || "jobs";
   document.getElementById("emailSubject").value = p.emailSubject || "";
   document.getElementById("emailBody").value = p.emailBody || "";
+  document.getElementById("connectionNote").value = p.connectionNote || "";
+  document.getElementById("connectionNoteCount").textContent = String((p.connectionNote || "").length);
+  document.getElementById("linkedinDm").value = p.linkedinDm || "";
   document.getElementById("composeSpeed").value = p.composeSpeed != null ? p.composeSpeed : 1000;
   document.getElementById("excludedEmailDomains").value = (p.excludedEmailDomains || []).join(", ");
   document.getElementById("autoSendEnabled").checked = p.autoSendEnabled === true;
@@ -83,6 +102,8 @@ function getPrefs() {
     searchMode: document.getElementById("dashSearchMode").value,
     emailSubject: document.getElementById("emailSubject").value,
     emailBody: document.getElementById("emailBody").value,
+    connectionNote: (document.getElementById("connectionNote").value || "").slice(0, 200),
+    linkedinDm: document.getElementById("linkedinDm").value || "",
     composeSpeed: parseInt(document.getElementById("composeSpeed").value) || 0,
     excludedEmailDomains: document.getElementById("excludedEmailDomains").value.split(",").map(s => s.trim()).filter(Boolean),
     autoSendEnabled: document.getElementById("autoSendEnabled").checked,
@@ -183,22 +204,32 @@ document.addEventListener("DOMContentLoaded", async () => {
   renderJobs(jobs);
   manualEmails = await Storage.getManualEmails();
   renderManualEmails();
-  if (port) port.postMessage({ action: "getPreferences" });
+  send({ action: "getPreferences" });
   const ca = await Storage.getComposeState();
   if (ca) { document.getElementById("btnComposeInGmail").style.display = "none"; document.getElementById("btnAbortCompose").style.display = "inline-block"; }
 
-  document.getElementById("btnStart").addEventListener("click", () => { const p = getPrefs(); handleScrapeProgress({ completed: 0, total: 0 }); if (port) port.postMessage({ action: "startScraping", config: p }); });
-  document.getElementById("btnStop").addEventListener("click", () => { if (port) port.postMessage({ action: "stopScraping" }); });
-  document.getElementById("btnSkip").addEventListener("click", () => { if (port) port.postMessage({ action: "skipQuery" }); });
+  document.getElementById("btnStart").addEventListener("click", () => { const p = getPrefs(); handleScrapeProgress({ completed: 0, total: 0 }); send({ action: "startScraping", config: p }); });
+  document.getElementById("btnStop").addEventListener("click", () => { send({ action: "stopScraping" }); });
+  document.getElementById("btnSkip").addEventListener("click", () => { send({ action: "skipQuery" }); });
   document.getElementById("btnPause").addEventListener("click", () => {
     const paused = document.getElementById("btnPause").textContent === "Resume";
-    if (port) port.postMessage({ action: paused ? "resumeScraping" : "pauseScraping" });
+    send({ action: paused ? "resumeScraping" : "pauseScraping" });
   });
-  document.getElementById("btnSavePrefs").addEventListener("click", () => { const p = getPrefs(); if (port) port.postMessage({ action: "savePreferences", prefs: p }); });
+  document.getElementById("btnSavePrefs").addEventListener("click", () => { const p = getPrefs(); send({ action: "savePreferences", prefs: p }); });
   document.getElementById("btnSaveEmailPrefs").addEventListener("click", () => {
     const p = getPrefs();
     document.getElementById("emailSaveStatus").textContent = "Saving...";
-    if (port) port.postMessage({ action: "savePreferences", prefs: p });
+    send({ action: "savePreferences", prefs: p });
+  });
+  document.getElementById("btnSaveDmTemplates").addEventListener("click", () => {
+    const p = getPrefs();
+    document.getElementById("dmSaveStatus").textContent = "Saving...";
+    send({ action: "savePreferences", prefs: p });
+  });
+  const noteInput = document.getElementById("connectionNote");
+  noteInput.addEventListener("input", () => {
+    noteInput.value = noteInput.value.slice(0, 200);
+    document.getElementById("connectionNoteCount").textContent = String(noteInput.value.length);
   });
   document.getElementById("autoSendEnabled").addEventListener("change", () => {
     document.getElementById("autoSendOptions").style.display = document.getElementById("autoSendEnabled").checked ? "block" : "none";
@@ -210,7 +241,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
   document.getElementById("btnExportCSV").addEventListener("click", () => { Storage.getJobs().then(j => Exporter.downloadCSV(j)); });
   document.getElementById("btnExportXLS").addEventListener("click", () => { Storage.getJobs().then(j => Exporter.downloadXLS(j)); });
-  document.getElementById("btnClear").addEventListener("click", () => { if (confirm("Delete all?")) { if (port) port.postMessage({ action: "clearJobs" }); } });
+  document.getElementById("btnClear").addEventListener("click", () => { if (confirm("Delete all?")) { send({ action: "clearJobs" }); } });
   document.getElementById("btnCollapseSidebar").addEventListener("click", () => {
     document.getElementById("sidebar").classList.add("collapsed");
   });
@@ -224,15 +255,15 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   document.getElementById("btnComposeInGmail").addEventListener("click", async () => {
     const prefs = getPrefs();
-    if (port) port.postMessage({ action: "savePreferences", prefs });
+    send({ action: "savePreferences", prefs });
     document.getElementById("btnComposeInGmail").style.display = "none";
     document.getElementById("btnAbortCompose").style.display = "inline-block";
     document.getElementById("composeLog").innerHTML = '';
-    if (port) port.postMessage({ action: "enableComposeMode" });
+    send({ action: "enableComposeMode" });
   });
 
   document.getElementById("btnAbortCompose").addEventListener("click", () => {
-    if (port) port.postMessage({ action: "disableComposeMode" });
+    send({ action: "disableComposeMode" });
     document.getElementById("btnComposeInGmail").style.display = "inline-block";
     document.getElementById("btnAbortCompose").style.display = "none";
   });
