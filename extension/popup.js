@@ -131,12 +131,23 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("popupAutoSendMode").value = prefs.autoSendMode || "realtime";
   document.getElementById("popupBatchSize").value = prefs.batchSize || 10;
   if (prefs.autoSendEnabled) document.getElementById("popupAutoSendOptions").style.display = "flex";
+  document.getElementById("popupInPagePanel").checked = prefs.showInPagePanel === true;
+  document.getElementById("popupDebugLogs").checked = prefs.showDebugLogs === true;
 
   const r = await Storage.getResume();
   document.getElementById("popupResumeStatus").textContent = r ? "Resume: " + r.name : "Resume: none";
 
   document.getElementById("popupAutoSend").addEventListener("change", () => {
     document.getElementById("popupAutoSendOptions").style.display = document.getElementById("popupAutoSend").checked ? "flex" : "none";
+  });
+
+  ["popupInPagePanel", "popupDebugLogs"].forEach(id => {
+    document.getElementById(id).addEventListener("change", async () => {
+      const p = await Storage.getPreferences();
+      p.showInPagePanel = document.getElementById("popupInPagePanel").checked;
+      p.showDebugLogs = document.getElementById("popupDebugLogs").checked;
+      await Storage.savePreferences(p);
+    });
   });
 
   document.getElementById("btnStart").addEventListener("click", async () => {
