@@ -123,6 +123,34 @@ const Storage = {
     await chrome.storage.local.remove("sentEmails");
   },
 
+  async getManualEmails() {
+    const r = await chrome.storage.local.get("manualEmails");
+    return r.manualEmails || [];
+  },
+
+  async saveManualEmail(entry) {
+    const list = await this.getManualEmails();
+    const idx = list.findIndex(m => m.id === entry.id);
+    if (idx === -1) list.push(entry);
+    else list[idx] = entry;
+    await chrome.storage.local.set({ manualEmails: list });
+    return list;
+  },
+
+  async markManualEmailSent(id, sentAt) {
+    const list = await this.getManualEmails();
+    const idx = list.findIndex(m => m.id === id);
+    if (idx === -1) return false;
+    list[idx].status = "sent";
+    list[idx].sentAt = sentAt;
+    await chrome.storage.local.set({ manualEmails: list });
+    return true;
+  },
+
+  async clearManualEmails() {
+    await chrome.storage.local.remove("manualEmails");
+  },
+
   async getComposeState() {
     const r = await chrome.storage.local.get("composeActive");
     return r.composeActive || false;

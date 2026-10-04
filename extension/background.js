@@ -1,4 +1,4 @@
-importScripts("utils/storage.js", "utils/exporter.js");
+importScripts("utils/storage.js", "utils/exporter.js", "utils/parser.js");
 
 let composeAbort = false;
 let _composeQueue = [];
@@ -22,12 +22,12 @@ async function getOrWaitGmailTab() {
   return null;
 }
 
-async function sendSingleJob(job, prefs, tabId) {
+async function sendSingleJob(job, prefs, tabId, forceSend) {
   const to = job.email.split('\n')[0].trim();
   const subject = prefs.emailSubject || '';
   const body = prefs.emailBody || '';
   const speed = prefs.composeSpeed != null ? Number(prefs.composeSpeed) : 1000;
-  const autoSend = prefs.autoSendEnabled === true;
+  const autoSend = forceSend === true || prefs.autoSendEnabled === true;
   const minDelay = Number(prefs.sendMinDelay) || 1000;
   const maxDelay = Number(prefs.sendMaxDelay) || 3000;
   broadcastComposeLog({ type: 'progress', message: `Sending to ${to}...` });
@@ -66,11 +66,18 @@ async function processQueue() {
     if (isDomainExcluded(job, excluded)) continue;
     const to = (job.email || '').split('\n')[0].trim().toLowerCase();
     if (sentEmails.includes(to)) continue;
-    const ok = await sendSingleJob(job, prefs, tabId);
-    if (ok) sentEmails.push(to);
+    const ok = await sendSingleJob(job, prefs, tabId, job._manual === true);
+    if (ok) {
+      sentEmails.push(to);
+      if (job._manual) {
+        await Storage.markManualEmailSent(job.job_id, new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }));
+        chrome.runtime.sendMessage({ action: "manualEmailsUpdated" }).catch(() => {});
+      }
+    }
     if (!ok) break;
   }
   _isComposing = false;
+  if (_composeQueue.length > 0) processQueue();
 }
 
 async function processBatch() {
@@ -86,7 +93,7 @@ async function processBatch() {
     if (isDomainExcluded(job, excluded)) continue;
     const to = (job.email || '').split('\n')[0].trim().toLowerCase();
     if (sentEmails.includes(to)) continue;
-    const ok = await sendSingleJob(job, prefs, tabId);
+    const ok = await sendSingleJob(job, prefs, tabId, job._manual === true);
     if (ok) sentEmails.push(to);
     if (!ok) break;
   }
@@ -254,6 +261,134 @@ async function composeInGmail(jobs, port) {
 function notify(title, msg) {
   chrome.notifications.create({ type: "basic", iconUrl: "icons/icon_new.png", title, message: msg });
 }
+
+/***** RIGHT-CLICK MANUAL EMAIL COMPOSE *****/
+
+const CONTEXT_MENU_ID = "compose-selected-email";
+
+function manualJobId(email, url) {
+  let hash = 0;
+  const src = url + "|" + email;
+  for (let i = 0; i < src.length; i++) { hash = ((hash << 5) - hash + src.charCodeAt(i)) | 0; }
+  return "manual_" + Math.abs(hash);
+}
+
+// Record the human's manual right-click send in its own store (NOT the jobs table,
+// whose dedupe would drop empty-poster records). Holds email + post link + recruiter
+// context and gets flagged "sent" once the Gmail compose actually goes through.
+async function saveManualRecord(email, postUrl, poster) {
+  const emailLower = email.toLowerCase().trim();
+  const id = manualJobId(emailLower, postUrl);
+  const entry = {
+    id,
+    email: emailLower,
+    postUrl,
+    poster_name: poster.poster_name || "",
+    poster_title: poster.poster_title || "",
+    poster_profile_url: poster.poster_profile_url || "",
+    position: poster.position || "",
+    company: poster.company || "",
+    status: "queued",
+    createdAt: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })
+  };
+  await Storage.saveManualEmail(entry);
+  chrome.runtime.sendMessage({ action: "manualEmailsUpdated" }).catch(() => {});
+  return id;
+}
+
+async function createContextMenus() {
+  await chrome.contextMenus.removeAll();
+  chrome.contextMenus.create({
+    id: CONTEXT_MENU_ID,
+    title: "Compose and send",
+    contexts: ["selection", "link"],
+    documentUrlPatterns: ["https://*.linkedin.com/*", "http://*.linkedin.com/*"]
+  }, () => { if (chrome.runtime.lastError) console.error("context menu:", chrome.runtime.lastError.message); });
+}
+
+chrome.runtime.onInstalled.addListener(() => createContextMenus());
+chrome.runtime.onStartup.addListener(() => createContextMenus());
+
+async function extractEmailFromContext(info) {
+  if (info.linkUrl && /^mailto:/i.test(info.linkUrl)) {
+    const m = info.linkUrl.match(/^mailto:([^?]+)/i);
+    if (m && m[1].trim() && /@/.test(m[1])) return m[1].trim();
+    return null;
+  }
+  const sel = (info.selectionText || "").trim();
+  if (!sel) return null;
+  const found = LinkedinParser.regexExtract(sel);
+  if (found.emails && found.emails.length) return found.emails[0];
+  return "NO_EMAIL_IN_SELECTION";
+}
+
+async function composeManualEmail(email, tab) {
+  const prefs = await Storage.getPreferences();
+  const excluded = (prefs.excludedEmailDomains || []).map(d => d.toLowerCase());
+  const to = email.toLowerCase().trim();
+
+  if (isDomainExcluded({ email: to }, excluded)) {
+    const m = "Blocked " + to + " - domain is on the excluded list";
+    broadcastComposeLog({ type: "skip", message: m });
+    notify("Email Blocked", m);
+    return;
+  }
+  const sentEmails = await Storage.getSentEmails();
+  if (sentEmails.includes(to)) {
+    const m = "Blocked " + to + " - already emailed";
+    broadcastComposeLog({ type: "skip", message: m });
+    notify("Email Blocked", m);
+    return;
+  }
+
+  let postUrl = (tab && tab.url) ? tab.url.split("?")[0] : "https://www.linkedin.com/";
+  const poster = { poster_name: "", poster_title: "", poster_profile_url: "", position: "", company: "" };
+  if (tab && tab.id) {
+    try {
+      const res = await chrome.tabs.sendMessage(tab.id, { action: "getContextMenuInfo" });
+      const c = res && res.context ? res.context : {};
+      if (c.url) postUrl = c.url;
+      poster.poster_name = c.poster_name || "";
+      poster.poster_title = c.poster_title || "";
+      poster.poster_profile_url = c.poster_profile_url || "";
+      poster.position = c.position || "";
+      poster.company = c.company || "";
+    } catch (e) { /* content script not ready - fall back to tab url only */ }
+  }
+
+  const manualId = await saveManualRecord(to, postUrl, poster);
+  const manualJob = {
+    job_id: manualId, email: to, job_url: postUrl, _manual: true
+  };
+  _composeQueue.push(manualJob);
+
+  // send now if Gmail is open and ready, otherwise keep it queued and flush when Gmail loads.
+  // processQueue() blocks on getOrWaitGmailTab (up to 2min), so only call it when Gmail is ready.
+  const gmail = await getGmailTab();
+  const readyNow = !!(gmail && (await isContentScriptReady(gmail.id)));
+  if (readyNow) processQueue();
+  broadcastComposeLog({ type: "progress", message: "Manual email to " + to + (readyNow ? " composing..." : " queued until Gmail opens.") });
+  notify(readyNow ? "Sending Email" : "Email Queued",
+    readyNow ? "Composing to " + to : "Will send to " + to + " as soon as Gmail is open");
+}
+
+chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+  if (info.menuItemId !== CONTEXT_MENU_ID) return;
+  const email = await extractEmailFromContext(info);
+  if (!email) return;
+  if (email === "NO_EMAIL_IN_SELECTION") {
+    notify("No Email Found", "The selected text does not contain an email address.");
+    return;
+  }
+  composeManualEmail(email, tab).catch(e => console.error("manual compose:", e));
+});
+
+// flush queued manual composes the moment a Gmail tab finishes loading
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status === "complete" && tab && tab.url && tab.url.includes("mail.google.com")) {
+    processQueue();
+  }
+});
 
 async function updateBadge() {
   const stats = await Storage.getStats();

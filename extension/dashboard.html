@@ -131,11 +131,17 @@
           <button id="tabAll" class="tab active">All</button>
           <button id="tabWithEmail" class="tab">With Email</button>
           <button id="tabWithoutEmail" class="tab">Without Email</button>
+          <button id="tabManual" class="tab">Manual Sends</button>
         </div>
       </div>
-      <div class="table-wrapper">
+      <div class="table-wrapper" id="jobsTableWrap">
         <table class="jobs-table"><thead><tr><th>Position</th><th>Company</th><th>Location</th><th>Poster</th><th>Email</th><th>Cmp</th><th>Post/Job URL</th><th>Profile</th><th>Date</th></tr></thead>
         <tbody id="jobsBody"></tbody></table>
+      </div>
+      <div class="table-wrapper" id="manualSection" style="display:none">
+        <table class="jobs-table"><thead><tr><th>Email</th><th>Recruiter</th><th>Company / Role</th><th>Post Link</th><th>Sent At</th><th>Status</th></tr></thead>
+        <tbody id="manualBody"></tbody></table>
+        <p id="manualEmptyMsg" class="empty-msg">No right-click emails sent yet.</p>
       </div>
       <p id="emptyMsg" class="empty-msg">No jobs tracked yet.</p>
     </main>
