@@ -33,7 +33,9 @@ const defaultPreferences = {
   sendMinDelay: 1000,
   sendMaxDelay: 3000,
   connectionNote: "",
-  linkedinDm: ""
+  linkedinDm: "",
+  showInPagePanel: false,
+  showDebugLogs: false
 };
 
 const Storage = {

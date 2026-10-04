@@ -31,7 +31,11 @@ function rand(lo, hi) {
   return new Promise(r => setTimeout(r, delay));
 }
 function closeMenu() { document.body.click(); document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })); }
-function send(a, d) { try { chrome.runtime.sendMessage({ action: a, ...(d || {}) }, () => {}); } catch (e) {} }
+function send(a, d) {
+  (d || (d = {}));
+  try { panelHandleIncoming({ action: a, ...d }); } catch (e) {}
+  try { chrome.runtime.sendMessage({ action: a, ...d }, () => {}); } catch (e) {}
+}
 
 async function checkStop() {
   const s = await Storage.getState();
@@ -373,7 +377,6 @@ function captureMenuContext(e) {
   const node = (path && path[0]) || (e.target instanceof Element ? e.target : (e.target ? e.target.parentElement : null));
   _manualTarget = node;
   try {
-    ensurePanel();
     ljfLog("contextmenu on: " + (node ? node.tagName + "." + (node.className || "").toString().split(" ")[0] + (node.id ? "#" + node.id : "") : "none"));
   } catch (err) {}
   const card = node ? node.closest(".feed-shared-update-v2, [data-urn*='activity'], li.reusable-search__result-container") : null;
@@ -393,58 +396,485 @@ function captureMenuContext(e) {
 
 document.addEventListener("contextmenu", captureMenuContext, true);
 
-/* ====== IN-PAGE DEBUG PANEL ======
-   A fixed panel on the right edge of the page so logs are visible without
-   touching devtools (which minimizes when you click LinkedIn). Logs stay in the
-   DOM and never get flushed. Background messages are routed here too. */
-let _panEl = null, _panLogEl = null, _panRows = 0;
+/* ====== IN-PAGE EXTENSION PANEL ======
+   Mirrors the extension popup (status/stats, scrape search controls, email
+   compose controls + live logs) as a fixed panel on the right edge of the
+   LinkedIn page, so the extension can be driven without opening Chrome's
+   popup. Enabled via the popup toggle pref `showInPagePanel`. Debug logging
+   (right-click paste diagnostics) is gated behind `showDebugLogs`, off by
+   default. The panel talks to the background over a "popup"-named port, the
+   exact same contract the real popup uses, and receives the same runtime
+   broadcasts the popup listens to. */
+let _panel = null;
+let _pPort = null;
+let _pPrefs = { showInPagePanel: false, showDebugLogs: false };
+let _pRefs = {};
+let _pLastCompose = "";
 
-function ensurePanel() {
-  if (_panEl && document.body.contains(_panEl)) return;
-  if (document.getElementById("ljf-debug-panel")) { _panEl = document.getElementById("ljf-debug-panel"); return; }
-  _panEl = document.createElement("div");
-  _panEl.id = "ljf-debug-panel";
-  _panEl.innerHTML =
-    '<div id="ljf-dp-head">LJF Debug <button id="ljf-dp-hide">_</button> <button id="ljf-dp-testnote">Test Note</button></div>' +
-    '<div id="ljf-dp-log"></div>';
-  Object.assign(_panEl.style, {
-    position: "fixed", right: "0", top: "90px", width: "320px", maxHeight: "60vh", zIndex: "2147483646",
-    background: "#1f1f1f", color: "#d4d4d4", font: "11px/1.4 monospace", border: "1px solid #444",
-    borderRight: "none", boxShadow: "-2px 2px 8px rgba(0,0,0,.4)", display: "flex", flexDirection: "column"
-  });
-  _panLogEl = _panEl.querySelector("#ljf-dp-log");
-  Object.assign(_panLogEl.style, { overflow: "auto", flex: "1", padding: "4px 6px" });
-  _panEl.querySelector("#ljf-dp-head").style.padding = "4px 6px";
-  _panEl.querySelector("#ljf-dp-hide").addEventListener("click", () => { _panEl.style.display = "none"; });
-  _panEl.querySelector("#ljf-dp-testnote").addEventListener("click", async () => {
-    const prefs = await chrome.storage.sync.get("preferences");
-    const text = ((prefs.preferences && prefs.preferences.connectionNote) || "").slice(0, 200);
-    ljfLog("TEST NOTE button clicked; saved template len=" + text.length);
-    if (!text) { ljfLog("  -> no note saved in prefs"); return; }
-    const res = await pasteNoteWithVerify(text);
-    ljfLog("TEST NOTE result: " + JSON.stringify(res));
-  });
-  document.body.appendChild(_panEl);
+const PANEL_CSS = `
+#ljf-panel{position:fixed;right:0;top:0;bottom:0;width:396px;z-index:2147483646;
+  background:#f4f6fa;box-shadow:-8px 0 24px rgba(8,28,58,.16);display:flex;flex-direction:column;
+  font:13px/1.4 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1f2a37;
+  border-radius:14px 0 0 14px;overflow:hidden;transition:right .25s ease}
+#ljf-panel *{box-sizing:border-box;margin:0;padding:0}
+#ljf-panel button{cursor:pointer;font-family:inherit}
+#ljf-panel .ljf-head{display:flex;align-items:center;gap:10px;padding:14px;flex-shrink:0;
+  background:linear-gradient(135deg,#0a66c2 0%,#004182 62%,#03315a 100%);color:#fff;
+  box-shadow:0 2px 10px rgba(4,45,86,.28)}
+#ljf-panel .ljf-logo{width:28px;height:28px;border-radius:8px;flex-shrink:0;object-fit:cover;
+  box-shadow:0 2px 4px rgba(0,0,0,.28);background:#fff}
+#ljf-panel .ljf-title{font-weight:700;flex:1;font-size:14px;letter-spacing:.2px;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+#ljf-panel .ljf-status{background:rgba(255,255,255,.16);padding:3px 10px;border-radius:12px;
+  font-size:11px;font-weight:700;letter-spacing:.3px;backdrop-filter:blur(2px)}
+#ljf-panel .ljf-status.on{background:#34a853;box-shadow:0 0 0 3px rgba(52,168,83,.28)}
+#ljf-panel .ljf-collapse{background:transparent;border:none;color:#fff;width:28px;height:28px;
+  border-radius:50%;display:flex;align-items:center;justify-content:center;transition:background .15s}
+#ljf-panel .ljf-collapse:hover{background:rgba(255,255,255,.2)}
+#ljf-panel .ljf-restore{display:none;position:fixed;right:14px;top:14px;z-index:2147483647;width:44px;height:44px;
+  border-radius:12px;border:none;padding:0;align-items:center;justify-content:center;
+  background:linear-gradient(135deg,#0a66c2,#004182);box-shadow:0 6px 18px rgba(4,45,86,.4);color:#fff}
+#ljf-panel .ljf-restore:hover{transform:translateY(-1px)}
+#ljf-panel.ljf-hidden .ljf-restore{display:flex}
+#ljf-panel.ljf-hidden{right:-404px}
+#ljf-panel .ljf-tabs{display:flex;gap:4px;margin:10px 14px 0;padding:4px;background:#e7ebf1;
+  border-radius:11px;flex-shrink:0}
+#ljf-panel .ljf-tab{flex:1;padding:7px 0;background:transparent;border:none;border-radius:8px;
+  font-size:12px;font-weight:700;color:#6b7681;transition:all .18s}
+#ljf-panel .ljf-tab:hover{color:#0a66c2}
+#ljf-panel .ljf-tab.active{background:#fff;color:#0a66c2;box-shadow:0 1px 4px rgba(10,45,80,.16)}
+#ljf-panel .ljf-tabpane{display:none;flex-direction:column;flex:1;min-height:0;padding:12px 14px;overflow:hidden}
+#ljf-panel .ljf-tabpane.active{display:flex}
+#ljf-panel .ljf-stats{display:flex;gap:8px;margin-bottom:12px;flex-shrink:0}
+#ljf-panel .ljf-stat{flex:1;text-align:center;background:#fff;border:1px solid #e6eaf0;
+  border-radius:12px;padding:10px 4px 8px;box-shadow:0 1px 2px rgba(10,30,60,.05)}
+#ljf-panel .ljf-stat span.ljf-num{display:block;font-size:22px;font-weight:800;color:#0a66c2;letter-spacing:-.5px}
+#ljf-panel .ljf-stat span.ljf-lbl{font-size:10px;color:#8a94a0;text-transform:uppercase;letter-spacing:.5px;font-weight:600}
+#ljf-panel .ljf-progress{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+#ljf-panel .ljf-bar{flex:1;height:8px;background:#e0e6ee;border-radius:99px;overflow:hidden}
+#ljf-panel .ljf-fill{height:100%;width:0%;background:linear-gradient(90deg,#0a66c2,#57b5e5);border-radius:99px;transition:width .4s}
+#ljf-panel .ljf-progtext{font-size:11px;font-weight:700;color:#5b6672;white-space:nowrap}
+#ljf-panel .ljf-field{display:flex;align-items:center;gap:10px;margin-bottom:9px}
+#ljf-panel .ljf-field label{font-size:12px;font-weight:600;color:#4b5563;width:82px;flex-shrink:0}
+#ljf-panel .ljf-field select,#ljf-panel .ljf-field input{flex:1;min-width:0;padding:7px 9px;
+  border:1px solid #d3dae3;border-radius:9px;font-size:12px;color:#1f2a37;background:#fff;
+  transition:border-color .15s,box-shadow .15s}
+#ljf-panel .ljf-field select:focus,#ljf-panel .ljf-field input:focus{outline:none;border-color:#0a66c2;
+  box-shadow:0 0 0 3px rgba(10,102,194,.16)}
+#ljf-panel .ljf-field select:disabled{opacity:.5;background:#f1f3f6}
+#ljf-panel .ljf-checks{display:flex;gap:8px;margin-bottom:9px;flex-shrink:0;flex-wrap:wrap}
+#ljf-panel .ljf-checks label{font-size:12px;color:#374151;display:flex;align-items:center;gap:6px;
+  background:#fff;border:1px solid #e2e8f0;padding:5px 10px;border-radius:99px;cursor:pointer;user-select:none;
+  transition:all .15s}
+#ljf-panel .ljf-checks label:hover{border-color:#c3d2e4}
+#ljf-panel .ljf-checks label:has(input:checked){border-color:#0a66c2;background:#e9f2fc;color:#0a66c2}
+#ljf-panel .ljf-checks input{accent-color:#0a66c2}
+#ljf-panel .ljf-actions{display:flex;gap:8px;margin-bottom:10px;flex-shrink:0;flex-wrap:wrap}
+#ljf-panel .ljf-btn{padding:7px 14px;border:none;border-radius:9px;font-size:12px;font-weight:700;color:#374151;
+  background:#eef1f5;transition:all .15s;box-shadow:0 1px 1px rgba(10,30,60,.05)}
+#ljf-panel .ljf-btn:hover{background:#dfe5ec;transform:translateY(-1px)}
+#ljf-panel .ljf-btn:active{transform:translateY(0)}
+#ljf-panel .ljf-btn.ljf-primary{background:linear-gradient(135deg,#0a66c2,#0951a0);color:#fff;
+  box-shadow:0 2px 6px rgba(10,102,194,.35)}
+#ljf-panel .ljf-btn.ljf-primary:hover{background:linear-gradient(135deg,#0b74d6,#0a66c2)}
+#ljf-panel .ljf-btn.ljf-danger{background:#dc2626;color:#fff;box-shadow:0 2px 6px rgba(220,38,38,.3)}
+#ljf-panel .ljf-btn.ljf-danger:hover{background:#b91c1c}
+#ljf-panel .ljf-loghead{font-size:10px;font-weight:800;color:#8a94a0;text-transform:uppercase;
+  letter-spacing:.7px;margin:2px 0 6px;flex-shrink:0}
+#ljf-panel .ljf-log{flex:1;min-height:60px;overflow-y:auto;background:#fff;border:1px solid #e8edf3;
+  border-radius:12px;padding:6px 8px;font-size:11px;line-height:1.5;color:#4b5563}
+#ljf-panel .ljf-log::-webkit-scrollbar{width:8px}
+#ljf-panel .ljf-log::-webkit-scrollbar-thumb{background:#ccd4dd;border-radius:99px}
+#ljf-panel .ljf-log .ljf-l{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:2px 6px;
+  border-radius:6px}
+#ljf-panel .ljf-log .ljf-l:nth-child(even){background:#f8fafc}
+#ljf-panel .ljf-log .ljf-l.info{color:#1a56db}
+#ljf-panel .ljf-log .ljf-l.warn{color:#b45309}
+#ljf-panel .ljf-log .ljf-l.success{color:#047857}
+#ljf-panel .ljf-resume{font-size:11px;font-weight:600;color:#065f46;background:#ecfdf5;border:1px solid #d1fae5;
+  padding:5px 10px;border-radius:99px;margin-bottom:10px;flex-shrink:0}
+#ljf-panel .ljf-note{font-size:11px;color:#9aa4af;margin-top:4px;flex-shrink:0}
+`;
+
+function panelInjectStyle() {
+  if (document.getElementById("ljf-panel-style")) return;
+  const s = document.createElement("style");
+  s.id = "ljf-panel-style";
+  s.textContent = PANEL_CSS;
+  document.head.appendChild(s);
 }
 
-function ljfLog(msg) {
+function panelHTML() {
+  return `
+  <div class="ljf-head">
+    <img class="ljf-logo" src="${chrome.runtime.getURL("icons/icon_new.png")}" alt="">
+    <span class="ljf-title">LinkedIn Job Finder</span>
+    <span class="ljf-status" id="ljf-status">Off</span>
+    <button class="ljf-collapse" id="ljf-collapse" title="Collapse panel">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M6 3.5L2.5 8 6 12.5M9.5 3.5L6 8l3.5 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+  </div>
+  <button class="ljf-restore" id="ljf-restore" title="Expand panel">
+    <svg width="18" height="18" viewBox="0 0 16 16" fill="none"><path d="M10 3.5L13.5 8 10 12.5M6.5 3.5L10 8l-3.5 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </button>
+  <div class="ljf-tabs">
+    <button class="ljf-tab active" data-tab="search">Searching</button>
+    <button class="ljf-tab" data-tab="compose">Compose</button>
+  </div>
+  <div class="ljf-tabpane active" id="ljf-tp-search">
+    <div class="ljf-stats">
+      <div class="ljf-stat"><span class="ljf-num" id="ljf-total">0</span><span class="ljf-lbl">Found</span></div>
+      <div class="ljf-stat"><span class="ljf-num" id="ljf-email">0</span><span class="ljf-lbl">Email</span></div>
+      <div class="ljf-stat"><span class="ljf-num" id="ljf-sent">0</span><span class="ljf-lbl">Sent</span></div>
+    </div>
+    <div class="ljf-progress" id="ljf-progress" style="display:none">
+      <div class="ljf-bar"><div class="ljf-fill" id="ljf-progfill"></div></div>
+      <span class="ljf-progtext" id="ljf-progtext">0/0</span>
+    </div>
+    <div class="ljf-field"><label>Search</label>
+      <select id="ljf-mode">
+        <option value="jobs">Jobs</option><option value="posts">Posts</option><option value="both">Both</option>
+      </select>
+    </div>
+    <div class="ljf-field"><label>Speed</label>
+      <select id="ljf-speed">
+        <option value="normal">Normal (random delays)</option>
+        <option value="fast">Fast (reduced delays)</option>
+        <option value="max">Max (no delays)</option>
+      </select>
+    </div>
+    <div class="ljf-checks">
+      <label><input type="checkbox" id="ljf-onlyemail"> Only save with email</label>
+      <label><input type="checkbox" id="ljf-firstpage" checked> First page only</label>
+    </div>
+    <div class="ljf-field"><label>Companies</label>
+      <input id="ljf-companies" placeholder="Google, Microsoft...">
+    </div>
+    <div class="ljf-field"><label>Post Date</label>
+      <select id="ljf-postdate">
+        <option value="all">All filters</option><option value="">Any time</option>
+        <option value="past-24h">Past 24 hours</option><option value="past-week">Past week</option>
+        <option value="past-month">Past month</option>
+      </select>
+    </div>
+    <div class="ljf-actions">
+      <button class="ljf-btn ljf-primary" id="ljf-start">Start</button>
+      <button class="ljf-btn ljf-danger" id="ljf-stop" style="display:none">Stop</button>
+      <button class="ljf-btn" id="ljf-skip" style="display:none">Skip</button>
+      <button class="ljf-btn" id="ljf-pause" style="display:none">Pause</button>
+    </div>
+    <div class="ljf-actions">
+      <button class="ljf-btn" id="ljf-dash" style="flex:1">Dashboard</button>
+    </div>
+    <div class="ljf-loghead">Searching Log</div>
+    <div class="ljf-log" id="ljf-searchlog"></div>
+  </div>
+  <div class="ljf-tabpane" id="ljf-tp-compose">
+    <div class="ljf-field"><label>Speed</label>
+      <select id="ljf-compspeed">
+        <option value="3000">Slow (3s)</option><option value="2000">Medium (2s)</option>
+        <option value="1000" selected>Fast (1s)</option><option value="500">Faster (0.5s)</option>
+        <option value="0">Instant</option>
+      </select>
+    </div>
+    <div class="ljf-checks">
+      <label><input type="checkbox" id="ljf-autosend"> Auto-send</label>
+    </div>
+    <div class="ljf-field" id="ljf-autosend-opts" style="display:none">
+      <select id="ljf-automode" style="flex:1">
+        <option value="realtime">Realtime</option><option value="batch">Batch</option>
+      </select>
+      <input id="ljf-batch" type="number" value="10" min="1" max="100" style="width:52px" title="Batch size">
+    </div>
+    <div class="ljf-resume" id="ljf-resume">Resume: none</div>
+    <div class="ljf-field"><label>Skip</label>
+      <input id="ljf-excluded" placeholder="gmail, proton, yahoo...">
+    </div>
+    <div class="ljf-actions">
+      <button class="ljf-btn ljf-primary" id="ljf-compose" style="flex:1">Compose</button>
+      <button class="ljf-btn ljf-danger" id="ljf-compstop" style="display:none;flex:1">Stop</button>
+    </div>
+    <div class="ljf-loghead">Compose Log</div>
+    <div class="ljf-log" id="ljf-composelog"></div>
+  </div>`;
+}
+
+function panelBuild() {
+  if (_panel && document.body.contains(_panel)) return;
+  panelInjectStyle();
+  _panel = document.createElement("div");
+  _panel.id = "ljf-panel";
+  _panel.innerHTML = panelHTML();
+  document.body.appendChild(_panel);
+  _pRefs = {
+    status: document.getElementById("ljf-status"),
+    total: document.getElementById("ljf-total"),
+    email: document.getElementById("ljf-email"),
+    sent: document.getElementById("ljf-sent"),
+    progress: document.getElementById("ljf-progress"),
+    progfill: document.getElementById("ljf-progfill"),
+    progtext: document.getElementById("ljf-progtext"),
+    mode: document.getElementById("ljf-mode"),
+    speed: document.getElementById("ljf-speed"),
+    onlyemail: document.getElementById("ljf-onlyemail"),
+    firstpage: document.getElementById("ljf-firstpage"),
+    companies: document.getElementById("ljf-companies"),
+    postdate: document.getElementById("ljf-postdate"),
+    start: document.getElementById("ljf-start"),
+    stop: document.getElementById("ljf-stop"),
+    skip: document.getElementById("ljf-skip"),
+    pause: document.getElementById("ljf-pause"),
+    dash: document.getElementById("ljf-dash"),
+    searchlog: document.getElementById("ljf-searchlog"),
+    compspeed: document.getElementById("ljf-compspeed"),
+    autosend: document.getElementById("ljf-autosend"),
+    autosendopts: document.getElementById("ljf-autosend-opts"),
+    automode: document.getElementById("ljf-automode"),
+    batch: document.getElementById("ljf-batch"),
+    resume: document.getElementById("ljf-resume"),
+    excluded: document.getElementById("ljf-excluded"),
+    compose: document.getElementById("ljf-compose"),
+    compstop: document.getElementById("ljf-compstop"),
+    composelog: document.getElementById("ljf-composelog")
+  };
+  document.getElementById("ljf-collapse").addEventListener("click", () => {
+    _panel.classList.add("ljf-hidden");
+  });
+  document.getElementById("ljf-restore").addEventListener("click", () => {
+    _panel.classList.remove("ljf-hidden");
+  });
+  document.querySelectorAll("#ljf-panel .ljf-tab").forEach(tab => {
+    tab.addEventListener("click", () => {
+      document.querySelectorAll("#ljf-panel .ljf-tab").forEach(t => t.classList.toggle("active", t === tab));
+      const name = tab.dataset.tab;
+      document.getElementById("ljf-tp-search").classList.toggle("active", name === "search");
+      document.getElementById("ljf-tp-compose").classList.toggle("active", name === "compose");
+    });
+  });
+  panelWireControls();
+  panelLoadPrefs();
+  panelConnect();
+}
+
+function pLogAdd(container, text, type) {
+  const line = document.createElement("div");
+  line.className = "ljf-l" + (type ? " " + type : "");
+  line.textContent = "[" + new Date().toLocaleTimeString() + "] " + text;
+  container.appendChild(line);
+  while (container.childNodes.length > 250) container.removeChild(container.firstChild);
+  container.scrollTop = container.scrollHeight;
+}
+
+function panelSearchLog(text, type) {
+  if (_panel && _pRefs.searchlog) pLogAdd(_pRefs.searchlog, text, type);
+}
+
+function panelComposeLog(msg) {
+  if (!_panel || !_pRefs.composelog) return;
+  const text = msg.message || msg.text || "";
+  const key = (msg.type || "") + "|" + text;
+  if (key === _pLastCompose) return;
+  _pLastCompose = key;
+  let type = "";
+  if (["info", "start", "wait", "skip"].includes(msg.type)) type = "info";
+  else if (msg.type === "warn" || msg.type === "abort") type = "warn";
+  else if (msg.type === "success" || msg.type === "done") type = "success";
+  pLogAdd(_pRefs.composelog, text, type);
+  if (msg.type === "start") panelSetComposeUI(true);
+  if (msg.type === "abort") { panelSetComposeUI(false); Storage.setComposeState(false); }
+  if (msg.type === "done") {
+    Storage.getStats().then(st => { if (_pRefs.sent) _pRefs.sent.textContent = st.composed || 0; });
+  }
+}
+
+function panelSetSearchUI(scraping) {
+  const d = scraping ? "block" : "none";
+  _pRefs.start.style.display = scraping ? "none" : "block";
+  _pRefs.stop.style.display = d;
+  _pRefs.skip.style.display = d;
+  _pRefs.pause.style.display = d;
+  _pRefs.mode.disabled = scraping;
+  if (!scraping) {
+    _pRefs.pause.textContent = "Pause";
+  }
+}
+
+function panelSetComposeUI(active) {
+  _pRefs.compose.style.display = active ? "none" : "flex";
+  _pRefs.compstop.style.display = active ? "flex" : "none";
+}
+
+function panelSetState(state, stats) {
+  if (!_panel) return;
+  const scraping = state.status === "scraping";
+  _pRefs.status.textContent = scraping ? "Searching" : "Idle";
+  _pRefs.status.classList.toggle("on", scraping);
+  _pRefs.total.textContent = (stats || {}).total || 0;
+  _pRefs.email.textContent = (stats || {}).withEmail || 0;
+  _pRefs.sent.textContent = (stats || {}).composed || 0;
+  panelSetSearchUI(scraping);
+  if (state.mode === "posts") _pRefs.mode.value = "posts";
+  else if (state.mode === "both") _pRefs.mode.value = "both";
+  else _pRefs.mode.value = "jobs";
+}
+
+function panelSetProgress(p) {
+  if (!_panel) return;
+  const total = p.total || 0;
+  if (total > 0) {
+    _pRefs.progress.style.display = "flex";
+    const pct = Math.round((p.completed / total) * 100);
+    _pRefs.progfill.style.width = pct + "%";
+    _pRefs.progtext.textContent = p.completed + "/" + total;
+  } else {
+    _pRefs.progress.style.display = "none";
+  }
+}
+
+function panelHandleControl(msg) {
+  if (msg.type === "paused") {
+    _pRefs.pause.textContent = "Resume";
+    panelSearchLog("Search paused", "warn");
+  } else if (msg.type === "resumed") {
+    _pRefs.pause.textContent = "Pause";
+    panelSearchLog("Search resumed", "info");
+  } else if (msg.type === "skipped") {
+    panelSearchLog("Skip requested - moving to next query", "warn");
+  }
+}
+
+async function panelLoadPrefs() {
+  const prefs = await Storage.getPreferences();
+  _pRefs.mode.value = prefs.searchMode || "jobs";
+  _pRefs.speed.value = prefs.scrapeSpeed || "normal";
+  _pRefs.onlyemail.checked = prefs.onlyWithEmail === true;
+  _pRefs.firstpage.checked = prefs.jobsFirstPageOnly !== false;
+  _pRefs.companies.value = (prefs.targetCompanies || []).join(", ");
+  _pRefs.postdate.value = prefs.postDateFilter || "";
+  _pRefs.compspeed.value = prefs.composeSpeed != null ? prefs.composeSpeed : 1000;
+  _pRefs.excluded.value = (prefs.excludedEmailDomains || []).join(", ");
+  _pRefs.autosend.checked = prefs.autoSendEnabled === true;
+  _pRefs.automode.value = prefs.autoSendMode || "realtime";
+  _pRefs.batch.value = prefs.batchSize || 10;
+  _pRefs.autosendopts.style.display = prefs.autoSendEnabled ? "flex" : "none";
+  const r = await Storage.getResume();
+  _pRefs.resume.textContent = r ? "Resume: " + r.name : "Resume: none";
+  const st = await Storage.getState();
+  const stats = await Storage.getStats();
+  panelSetState(st, stats);
+  const active = await Storage.getComposeState();
+  panelSetComposeUI(active);
+}
+
+function panelWireControls() {
+  _pRefs.autosend.addEventListener("change", () => {
+    _pRefs.autosendopts.style.display = _pRefs.autosend.checked ? "flex" : "none";
+  });
+
+  _pRefs.start.addEventListener("click", async () => {
+    const prefs = await Storage.getPreferences();
+    prefs.searchMode = _pRefs.mode.value;
+    prefs.onlyWithEmail = _pRefs.onlyemail.checked;
+    prefs.jobsFirstPageOnly = _pRefs.firstpage.checked;
+    prefs.scrapeSpeed = _pRefs.speed.value;
+    prefs.targetCompanies = _pRefs.companies.value.split(",").map(s => s.trim()).filter(Boolean);
+    prefs.postDateFilter = _pRefs.postdate.value;
+    await Storage.savePreferences(prefs);
+    await Storage.setState({ stopRequested: false });
+    _pRefs.searchlog.innerHTML = '';
+    panelSetProgress({ completed: 0, total: 0 });
+    panelPost({ action: "startScraping", config: prefs });
+  });
+
+  _pRefs.stop.addEventListener("click", () => {
+    panelSearchLog("Stop requested", "warn");
+    panelPost({ action: "stopScraping" });
+  });
+  _pRefs.skip.addEventListener("click", () => {
+    panelSearchLog("Skip requested - moving to next query", "warn");
+    panelPost({ action: "skipQuery" });
+  });
+  _pRefs.pause.addEventListener("click", () => {
+    // Update the button optimistically so the user gets instant feedback even
+    // if the reliability broadcast arrives late or the port just reconnected.
+    const pausing = _pRefs.pause.textContent !== "Resume";
+    _pRefs.pause.textContent = pausing ? "Resume" : "Pause";
+    panelSearchLog(pausing ? "Pausing search..." : "Resuming search...", pausing ? "warn" : "info");
+    panelPost({ action: pausing ? "pauseScraping" : "resumeScraping" });
+  });
+
+  _pRefs.dash.addEventListener("click", () => {
+    // chrome.tabs.create is not available in content scripts, so open the
+    // dashboard from the background instead.
+    panelPost({ action: "openDashboard" });
+  });
+
+  _pRefs.compose.addEventListener("click", async () => {
+    const prefs = await Storage.getPreferences();
+    prefs.composeSpeed = parseInt(_pRefs.compspeed.value) || 0;
+    prefs.excludedEmailDomains = _pRefs.excluded.value.split(",").map(s => s.trim()).filter(Boolean);
+    prefs.autoSendEnabled = _pRefs.autosend.checked;
+    prefs.autoSendMode = _pRefs.automode.value;
+    prefs.batchSize = parseInt(_pRefs.batch.value) || 10;
+    await Storage.savePreferences(prefs);
+    _pRefs.composelog.innerHTML = '';
+    panelPost({ action: "enableComposeMode" });
+  });
+
+  _pRefs.compstop.addEventListener("click", () => panelPost({ action: "disableComposeMode" }));
+}
+
+function panelPost(msg) {
+  if (_pPort) { try { _pPort.postMessage(msg); return; } catch (e) {} }
+  try { chrome.runtime.sendMessage(msg); } catch (e) {}
+}
+
+function panelConnect() {
+  panelDisconnect();
   try {
-    ensurePanel();
-    _panRows++;
-    const line = document.createElement("div");
-    line.style.whiteSpace = "pre-wrap";
-    line.style.wordBreak = "break-all";
-    line.style.margin = "1px 0";
-    line.style.borderBottom = "1px solid #2a2a2a";
-    line.textContent = "[" + new Date().toLocaleTimeString() + "] " + msg;
-    _panLogEl.appendChild(line);
-    while (_panLogEl.childNodes.length > 200) _panLogEl.removeChild(_panLogEl.firstChild);
-    _panLogEl.scrollTop = _panLogEl.scrollHeight;
-    _panEl.style.display = "flex";
-  } catch (e) {}
+    _pPort = chrome.runtime.connect({ name: "popup" });
+    _pPort.onMessage.addListener(m => {
+      if (m.action === "state") panelSetState(m.state, m.stats);
+      if (m.action === "started") panelSetSearchUI(true);
+      if (m.action === "stopped") { panelSetSearchUI(false); panelSetProgress({ completed: 0, total: 0 }); }
+      if (m.action === "composeProgress") panelComposeLog(m);
+    });
+    _pPort.onDisconnect.addListener(() => {
+      _pPort = null;
+      // background service worker may have restarted; reconnect after a beat
+      if (_panel && document.body.contains(_panel) && _pPrefs.showInPagePanel) setTimeout(panelConnect, 1500);
+    });
+  } catch (e) { _pPort = null; }
 }
 
-// Route messages from the background (notifications, paste results) into the panel.
+function panelDisconnect() {
+  if (_pPort) { try { _pPort.disconnect(); } catch (e) {} _pPort = null; }
+}
+
+function panelHandleIncoming(msg) {
+  if (!msg) return;
+  if (msg.action === "log") panelSearchLog(msg.text || "", "info");
+  if (msg.action === "progress") panelSetProgress(msg);
+}
+
+function panelDestroy() {
+  panelDisconnect();
+  if (_panel) { try { _panel.remove(); } catch (e) {} _panel = null; _pRefs = {}; }
+}
+
+function panelSyncFromPrefs(prefs) {
+  _pPrefs.showInPagePanel = prefs.showInPagePanel === true;
+  _pPrefs.showDebugLogs = prefs.showDebugLogs === true;
+  if (_pPrefs.showInPagePanel) panelBuild();
+  else panelDestroy();
+}
+
+// Debug logging for right-click paste diagnostics. Gated by `showDebugLogs`
+// (toggle in popup, disabled by default) so normal users see nothing.
+function ljfLog(msg) {
+  if (!_pPrefs.showDebugLogs) return;
+  try { panelSearchLog("[dbg] " + msg, ""); } catch (e) {}
+}
 
 /* ====== PASTE TEMPLATE TARGETING ====== */
 
@@ -1006,6 +1436,18 @@ async function runAll(cfg) {
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  // Route extension-wide broadcasts into the in-page panel (same messages the
+  // popup/dashboard listen to). Local scrape logs/progress come via send().
+  try {
+    if (msg && msg.action && ["composeLog", "statsUpdate", "scrapeControl", "scrapingComplete", "log", "progress"].includes(msg.action)) {
+      if (msg.action === "composeLog") panelComposeLog(msg);
+      else if (msg.action === "statsUpdate") { if (_pRefs.total) { _pRefs.total.textContent = msg.stats.total; _pRefs.email.textContent = msg.stats.withEmail; _pRefs.sent.textContent = msg.stats.composed; } }
+      else if (msg.action === "scrapeControl") panelHandleControl(msg);
+      else if (msg.action === "scrapingComplete") { panelSetSearchUI(false); panelSetProgress({ completed: 0, total: 0 }); }
+      else if (msg.action === "log") panelSearchLog(msg.text || "", "info");
+      else if (msg.action === "progress") panelSetProgress(msg);
+    }
+  } catch (e) {}
   if (msg.action === "startScraping") {
     sendResponse({ ok: true });
     shouldStop = false;
@@ -1045,8 +1487,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === "ping") { sendResponse({ ok: true }); }
 });
 
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "sync" && changes.preferences) {
+    const p = { ...(changes.preferences.newValue || {}) };
+    panelSyncFromPrefs(p);
+  }
+});
+
 (async function init() {
-  try { ensurePanel(); ljfLog("Panel ready. LJF content script active on: " + location.pathname); } catch (e) {}
+  const prefs = await Storage.getPreferences();
+  panelSyncFromPrefs(prefs);
+  try { panelSearchLog("Panel ready. LJF content script active on: " + location.pathname); } catch (e) {}
   const saved = await chrome.storage.local.get("activeScrapeConfig");
   const sc = saved.activeScrapeConfig;
   if (!sc || !sc.config) return;
