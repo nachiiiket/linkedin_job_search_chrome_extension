@@ -33,7 +33,7 @@ function handle(msg) {
 }
 
 function updateState(state, stats) {
-  const s = state.status === "scraping";
+  const s = state.status === "searching";
   document.getElementById("btnStart").style.display = s ? "none" : "inline-block";
   document.getElementById("btnStop").style.display = s ? "inline-block" : "none";
   document.getElementById("btnSkip").style.display = s ? "inline-block" : "none";
@@ -65,7 +65,7 @@ function populateForm(p) {
   document.getElementById("onlyWithEmail").checked = p.onlyWithEmail === true;
   document.getElementById("postedWithinDays").value = p.postedWithinDays || 1;
   document.getElementById("maxJobsPerRun").value = p.maxJobsPerRun || 50;
-  document.getElementById("scrapeSpeed").value = p.scrapeSpeed || "normal";
+  document.getElementById("searchSpeed").value = p.searchSpeed || "normal";
   document.getElementById("postDateFilter").value = p.postDateFilter || "";
   // fix: restore searchMode from saved prefs
   document.getElementById("dashSearchMode").value = p.searchMode || "jobs";
@@ -96,7 +96,7 @@ function getPrefs() {
     onlyWithEmail: document.getElementById("onlyWithEmail").checked,
     postedWithinDays: parseInt(document.getElementById("postedWithinDays").value) || 1,
     maxJobsPerRun: parseInt(document.getElementById("maxJobsPerRun").value) || 50,
-    scrapeSpeed: document.getElementById("scrapeSpeed").value,
+    searchSpeed: document.getElementById("searchSpeed").value,
     postDateFilter: document.getElementById("postDateFilter").value,
     targetPosterTitles: [], excludedKeywords: [],
     searchMode: document.getElementById("dashSearchMode").value,
@@ -208,12 +208,12 @@ document.addEventListener("DOMContentLoaded", async () => {
   const ca = await Storage.getComposeState();
   if (ca) { document.getElementById("btnComposeInGmail").style.display = "none"; document.getElementById("btnAbortCompose").style.display = "inline-block"; }
 
-  document.getElementById("btnStart").addEventListener("click", () => { const p = getPrefs(); handleScrapeProgress({ completed: 0, total: 0 }); send({ action: "startScraping", config: p }); });
-  document.getElementById("btnStop").addEventListener("click", () => { send({ action: "stopScraping" }); });
+  document.getElementById("btnStart").addEventListener("click", () => { const p = getPrefs(); handleSearchProgress({ completed: 0, total: 0 }); send({ action: "startSearching", config: p }); });
+  document.getElementById("btnStop").addEventListener("click", () => { send({ action: "stopSearching" }); });
   document.getElementById("btnSkip").addEventListener("click", () => { send({ action: "skipQuery" }); });
   document.getElementById("btnPause").addEventListener("click", () => {
     const paused = document.getElementById("btnPause").textContent === "Resume";
-    send({ action: paused ? "resumeScraping" : "pauseScraping" });
+    send({ action: paused ? "resumeSearching" : "pauseSearching" });
   });
   document.getElementById("btnSavePrefs").addEventListener("click", () => { const p = getPrefs(); send({ action: "savePreferences", prefs: p }); });
   document.getElementById("btnSaveEmailPrefs").addEventListener("click", () => {
@@ -354,10 +354,10 @@ function handleComposeProgress(msg) {
   log.scrollTop = log.scrollHeight;
 }
 
-function handleScrapeProgress(p) {
-  const row = document.getElementById("scrapeProgressRow");
-  const bar = document.getElementById("scrapeProgressBar");
-  const text = document.getElementById("scrapeProgressText");
+function handleSearchProgress(p) {
+  const row = document.getElementById("searchProgressRow");
+  const bar = document.getElementById("searchProgressBar");
+  const text = document.getElementById("searchProgressText");
   if (!row || !bar) return;
   const total = p.total || 0;
   row.style.display = total > 0 ? "flex" : "none";
@@ -367,12 +367,12 @@ function handleScrapeProgress(p) {
 }
 
 chrome.runtime.onMessage.addListener((msg) => {
-  if (msg.action === "progress") handleScrapeProgress(msg);
-  if (msg.action === "scrapingComplete") handleScrapeProgress({ completed: 0, total: 0 });
+  if (msg.action === "progress") handleSearchProgress(msg);
+  if (msg.action === "searchingComplete") handleSearchProgress({ completed: 0, total: 0 });
   if (msg.action === "manualEmailsUpdated") {
     Storage.getManualEmails().then(m => { manualEmails = m; renderManualEmails(); });
   }
-  if (msg.action === "scrapeControl") {
+  if (msg.action === "searchControl") {
     const btn = document.getElementById("btnPause");
     if (!btn) return;
     if (msg.type === "paused") {

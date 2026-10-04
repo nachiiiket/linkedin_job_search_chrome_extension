@@ -21,7 +21,7 @@ const defaultPreferences = {
   searchMode: "jobs",
   jobsFirstPageOnly: true,
   onlyWithEmail: false,
-  scrapeSpeed: "normal",
+  searchSpeed: "normal",
   postDateFilter: "",
   emailSubject: "",
   emailBody: "",
@@ -88,12 +88,12 @@ const Storage = {
   },
 
   async getState() {
-    const r = await chrome.storage.local.get("scrapeState");
-    return r.scrapeState || { status: "idle", mode: "jobs", totalFound: 0 };
+    const r = await chrome.storage.local.get("searchState");
+    return r.searchState || { status: "idle", mode: "jobs", totalFound: 0 };
   },
 
   async setState(state) {
-    await chrome.storage.local.set({ scrapeState: state });
+    await chrome.storage.local.set({ searchState: state });
   },
 
   async saveResume(data) {

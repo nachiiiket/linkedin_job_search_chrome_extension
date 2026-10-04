@@ -4,7 +4,7 @@ function connect() {
   port = chrome.runtime.connect({ name: "popup" });
   port.onMessage.addListener(m => {
     if (m.action === "state") updateUI(m.state, m.stats);
-    if (m.action === "started") setStatus("scraping");
+    if (m.action === "started") setStatus("searching");
     if (m.action === "stopped") setStatus("idle");
     if (m.action === "composeProgress") handleComposeProgress(m);
   });
@@ -12,15 +12,15 @@ function connect() {
 }
 
 function updateUI(state, stats) {
-  document.getElementById("statusText").textContent = state.status === "scraping" ? "Scraping..." : "Idle";
-  document.getElementById("statusText").className = state.status === "scraping" ? "status-scraping" : "status-idle";
+  document.getElementById("statusText").textContent = state.status === "searching" ? "Searching..." : "Idle";
+  document.getElementById("statusText").className = state.status === "searching" ? "status-searching" : "status-idle";
   document.getElementById("statTotal").textContent = (stats || {}).total || 0;
   document.getElementById("statEmail").textContent = (stats || {}).withEmail || 0;
   document.getElementById("statComposed").textContent = (stats || {}).composed || 0;
-  document.getElementById("btnStart").style.display = state.status === "scraping" ? "none" : "block";
-  document.getElementById("btnStop").style.display = state.status === "scraping" ? "block" : "none";
-  document.getElementById("searchMode").disabled = state.status === "scraping";
-  setScrapeControls(state.status === "scraping");
+  document.getElementById("btnStart").style.display = state.status === "searching" ? "none" : "block";
+  document.getElementById("btnStop").style.display = state.status === "searching" ? "block" : "none";
+  document.getElementById("searchMode").disabled = state.status === "searching";
+  setSearchControls(state.status === "searching");
   const pauseBtn = document.getElementById("btnPause");
   pauseBtn.textContent = "Pause";
   pauseBtn.classList.remove("btn-primary");
@@ -29,10 +29,10 @@ function updateUI(state, stats) {
   else document.getElementById("searchMode").value = "jobs";
 }
 
-function handleScrapeProgress(p) {
-  const row = document.getElementById("scrapeProgressRow");
-  const bar = document.getElementById("scrapeProgressBar");
-  const text = document.getElementById("scrapeProgressText");
+function handleSearchProgress(p) {
+  const row = document.getElementById("searchProgressRow");
+  const bar = document.getElementById("searchProgressBar");
+  const text = document.getElementById("searchProgressText");
   if (!row || !bar) return;
   const total = p.total || 0;
   row.style.display = total > 0 ? "flex" : "none";
@@ -41,35 +41,35 @@ function handleScrapeProgress(p) {
   text.textContent = p.completed + "/" + total;
 }
 
-function setScrapeControls(scraping) {
-  const d = scraping ? "block" : "none";
+function setSearchControls(searching) {
+  const d = searching ? "block" : "none";
   document.getElementById("btnSkip").style.display = d;
   document.getElementById("btnPause").style.display = d;
 }
 
-function handleScrapeControl(type) {
+function handleSearchControl(type) {
   const btn = document.getElementById("btnPause");
   if (type === "paused") {
     btn.textContent = "Resume";
     btn.classList.add("btn-primary");
-    addLogEntry("scrapeLog", { type: "warn", text: "Scraping paused" });
+    addLogEntry("searchLog", { type: "warn", text: "Searching paused" });
   } else if (type === "resumed") {
     btn.textContent = "Pause";
     btn.classList.remove("btn-primary");
-    addLogEntry("scrapeLog", { type: "info", text: "Scraping resumed" });
+    addLogEntry("searchLog", { type: "info", text: "Searching resumed" });
   } else if (type === "skipped") {
-    addLogEntry("scrapeLog", { type: "warn", text: "Skip requested - moving to next query" });
+    addLogEntry("searchLog", { type: "warn", text: "Skip requested - moving to next query" });
   }
 }
 
 function setStatus(s) {
-  document.getElementById("statusText").textContent = s === "scraping" ? "Scraping..." : "Idle";
-  document.getElementById("statusText").className = s === "scraping" ? "status-scraping" : "status-idle";
-  document.getElementById("btnStart").style.display = s === "scraping" ? "none" : "block";
-  document.getElementById("btnStop").style.display = s === "scraping" ? "block" : "none";
-  document.getElementById("searchMode").disabled = s === "scraping";
-  setScrapeControls(s === "scraping");
-  if (s !== "scraping") {
+  document.getElementById("statusText").textContent = s === "searching" ? "Searching..." : "Idle";
+  document.getElementById("statusText").className = s === "searching" ? "status-searching" : "status-idle";
+  document.getElementById("btnStart").style.display = s === "searching" ? "none" : "block";
+  document.getElementById("btnStop").style.display = s === "searching" ? "block" : "none";
+  document.getElementById("searchMode").disabled = s === "searching";
+  setSearchControls(s === "searching");
+  if (s !== "searching") {
     const btn = document.getElementById("btnPause");
     btn.textContent = "Pause";
     btn.classList.remove("btn-primary");
@@ -122,7 +122,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("onlyWithEmail").checked = prefs.onlyWithEmail === true;
   document.getElementById("jobsFirstPageOnly").checked = prefs.jobsFirstPageOnly !== false;
   document.getElementById("searchMode").value = prefs.searchMode || "jobs";
-  document.getElementById("scrapeSpeed").value = prefs.scrapeSpeed || "normal";
+  document.getElementById("searchSpeed").value = prefs.searchSpeed || "normal";
   document.getElementById("popupCompanies").value = (prefs.targetCompanies || []).join(", ");
   document.getElementById("popupPostDateFilter").value = prefs.postDateFilter || "";
   document.getElementById("popupSpeed").value = prefs.composeSpeed != null ? prefs.composeSpeed : 1000;
@@ -154,25 +154,25 @@ document.addEventListener("DOMContentLoaded", async () => {
     prefs.searchMode = document.getElementById("searchMode").value;
     prefs.onlyWithEmail = document.getElementById("onlyWithEmail").checked;
     prefs.jobsFirstPageOnly = document.getElementById("jobsFirstPageOnly").checked;
-    prefs.scrapeSpeed = document.getElementById("scrapeSpeed").value;
+    prefs.searchSpeed = document.getElementById("searchSpeed").value;
     prefs.targetCompanies = document.getElementById("popupCompanies").value.split(",").map(s => s.trim()).filter(Boolean);
     prefs.postDateFilter = document.getElementById("popupPostDateFilter").value;
-    prefs.scrapeSpeed = document.getElementById("scrapeSpeed").value;
+    prefs.searchSpeed = document.getElementById("searchSpeed").value;
     await Storage.savePreferences(prefs);
     await Storage.setState({ stopRequested: false });
-    document.getElementById("scrapeLog").innerHTML = '';
-    handleScrapeProgress({ completed: 0, total: 0 });
-    if (port) port.postMessage({ action: "startScraping", config: prefs });
+    document.getElementById("searchLog").innerHTML = '';
+    handleSearchProgress({ completed: 0, total: 0 });
+    if (port) port.postMessage({ action: "startSearching", config: prefs });
   });
   document.getElementById("btnStop").addEventListener("click", () => {
-    if (port) port.postMessage({ action: "stopScraping" });
+    if (port) port.postMessage({ action: "stopSearching" });
   });
   document.getElementById("btnSkip").addEventListener("click", () => {
     if (port) port.postMessage({ action: "skipQuery" });
   });
   document.getElementById("btnPause").addEventListener("click", () => {
     const paused = document.getElementById("btnPause").textContent === "Resume";
-    if (port) port.postMessage({ action: paused ? "resumeScraping" : "pauseScraping" });
+    if (port) port.postMessage({ action: paused ? "resumeSearching" : "pauseSearching" });
   });
   document.getElementById("btnDashboard").addEventListener("click", () => {
     chrome.tabs.create({ url: "dashboard.html" });
@@ -203,11 +203,11 @@ chrome.runtime.onMessage.addListener((msg) => {
     document.getElementById("statComposed").textContent = msg.stats.composed;
     chrome.action.setBadgeText({ text: String(msg.stats.total) });
   }
-  if (msg.action === "scrapingComplete") { setStatus("idle"); handleScrapeProgress({ completed: 0, total: 0 }); }
-  if (msg.action === "progress") handleScrapeProgress(msg);
-  if (msg.action === "scrapeControl") handleScrapeControl(msg.type);
+  if (msg.action === "searchingComplete") { setStatus("idle"); handleSearchProgress({ completed: 0, total: 0 }); }
+  if (msg.action === "progress") handleSearchProgress(msg);
+  if (msg.action === "searchControl") handleSearchControl(msg.type);
   if (msg.action === "log") {
-    addLogEntry("scrapeLog", { type: "info", text: msg.text });
+    addLogEntry("searchLog", { type: "info", text: msg.text });
   }
   if (msg.action === "composeLog") {
     addLogEntry("composeLog", msg);

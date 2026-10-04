@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "LinkedIn Job Finder",
   "version": "1.0.0",
-  "description": "Scrape LinkedIn job listings, track applications, and export to Excel.",
+  "description": "Search LinkedIn job listings, track applications, and export to Excel.",
   "permissions": ["storage", "downloads", "tabs", "notifications", "contextMenus"],
   "host_permissions": ["https://*.linkedin.com/*", "https://mail.google.com/*"],
   "action": {

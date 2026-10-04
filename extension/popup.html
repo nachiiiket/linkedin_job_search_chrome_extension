@@ -17,9 +17,9 @@
           <div class="stat"><span id="statEmail" class="stat-number">0</span><span class="stat-label">Email</span></div>
           <div class="stat"><span id="statComposed" class="stat-number">0</span><span class="stat-label">Sent</span></div>
         </div>
-        <div class="progress-row" id="scrapeProgressRow" style="display:none">
-          <div class="progress-track"><div id="scrapeProgressBar" class="progress-fill" style="width:0%"></div></div>
-          <span id="scrapeProgressText" class="progress-text">0/0</span>
+        <div class="progress-row" id="searchProgressRow" style="display:none">
+          <div class="progress-track"><div id="searchProgressBar" class="progress-fill" style="width:0%"></div></div>
+          <span id="searchProgressText" class="progress-text">0/0</span>
         </div>
       </div>
       <div class="mode-select">
@@ -32,7 +32,7 @@
       </div>
       <div class="mode-select">
         <span class="label">Speed</span>
-        <select id="scrapeSpeed">
+        <select id="searchSpeed">
           <option value="normal">Normal (random delays)</option>
           <option value="fast">Fast (reduced delays)</option>
           <option value="max">Max (no delays)</option>
@@ -57,7 +57,7 @@
         </select>
       </div>
       <div class="actions">
-        <button id="btnStart" class="btn btn-primary">Start Scraping</button>
+        <button id="btnStart" class="btn btn-primary">Start Searching</button>
         <button id="btnStop" class="btn btn-danger" style="display:none">Stop</button>
         <button id="btnSkip" class="btn btn-secondary" style="display:none" title="Skip current query">Skip</button>
         <button id="btnPause" class="btn btn-secondary" style="display:none">Pause</button>
@@ -97,8 +97,8 @@
     </div>
     <div class="popup-right">
       <div class="popup-log-section">
-        <div class="popup-log-header">Scraping</div>
-        <div id="scrapeLog" class="popup-log"></div>
+        <div class="popup-log-header">Searching</div>
+        <div id="searchLog" class="popup-log"></div>
       </div>
       <div class="popup-log-section">
         <div class="popup-log-header">Email Compose</div>

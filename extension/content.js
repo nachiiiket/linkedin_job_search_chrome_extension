@@ -20,8 +20,8 @@ function broadcastProgress() {
 
 async function waitWhilePaused() {
   while (!(await checkStop())) {
-    const r = await chrome.storage.local.get("scrapePaused");
-    if (!r.scrapePaused) return;
+    const r = await chrome.storage.local.get("searchPaused");
+    if (!r.searchPaused) return;
     await new Promise(r2 => setTimeout(r2, 1000));
   }
 }
@@ -178,7 +178,7 @@ async function nextJobPage(pg) {
   return false;
 }
 
-async function scrapeJobs(cfg) {
+async function searchJobs(cfg) {
   const max = cfg.maxJobsPerRun || 50;
   await waitEl("[data-job-id], .jobs-search-results-list", 12000);
   await rand(1500, 2500);
@@ -397,7 +397,7 @@ function captureMenuContext(e) {
 document.addEventListener("contextmenu", captureMenuContext, true);
 
 /* ====== IN-PAGE EXTENSION PANEL ======
-   Mirrors the extension popup (status/stats, scrape search controls, email
+   Mirrors the extension popup (status/stats, LinkedIn search controls, email
    compose controls + live logs) as a fixed panel on the right edge of the
    LinkedIn page, so the extension can be driven without opening Chrome's
    popup. Enabled via the popup toggle pref `showInPagePanel`. Debug logging
@@ -687,14 +687,14 @@ function panelComposeLog(msg) {
   }
 }
 
-function panelSetSearchUI(scraping) {
-  const d = scraping ? "block" : "none";
-  _pRefs.start.style.display = scraping ? "none" : "block";
+function panelSetSearchUI(searching) {
+  const d = searching ? "block" : "none";
+  _pRefs.start.style.display = searching ? "none" : "block";
   _pRefs.stop.style.display = d;
   _pRefs.skip.style.display = d;
   _pRefs.pause.style.display = d;
-  _pRefs.mode.disabled = scraping;
-  if (!scraping) {
+  _pRefs.mode.disabled = searching;
+  if (!searching) {
     _pRefs.pause.textContent = "Pause";
   }
 }
@@ -706,13 +706,13 @@ function panelSetComposeUI(active) {
 
 function panelSetState(state, stats) {
   if (!_panel) return;
-  const scraping = state.status === "scraping";
-  _pRefs.status.textContent = scraping ? "Searching" : "Idle";
-  _pRefs.status.classList.toggle("on", scraping);
+  const searching = state.status === "searching";
+  _pRefs.status.textContent = searching ? "Searching" : "Idle";
+  _pRefs.status.classList.toggle("on", searching);
   _pRefs.total.textContent = (stats || {}).total || 0;
   _pRefs.email.textContent = (stats || {}).withEmail || 0;
   _pRefs.sent.textContent = (stats || {}).composed || 0;
-  panelSetSearchUI(scraping);
+  panelSetSearchUI(searching);
   if (state.mode === "posts") _pRefs.mode.value = "posts";
   else if (state.mode === "both") _pRefs.mode.value = "both";
   else _pRefs.mode.value = "jobs";
@@ -746,7 +746,7 @@ function panelHandleControl(msg) {
 async function panelLoadPrefs() {
   const prefs = await Storage.getPreferences();
   _pRefs.mode.value = prefs.searchMode || "jobs";
-  _pRefs.speed.value = prefs.scrapeSpeed || "normal";
+  _pRefs.speed.value = prefs.searchSpeed || "normal";
   _pRefs.onlyemail.checked = prefs.onlyWithEmail === true;
   _pRefs.firstpage.checked = prefs.jobsFirstPageOnly !== false;
   _pRefs.companies.value = (prefs.targetCompanies || []).join(", ");
@@ -776,19 +776,19 @@ function panelWireControls() {
     prefs.searchMode = _pRefs.mode.value;
     prefs.onlyWithEmail = _pRefs.onlyemail.checked;
     prefs.jobsFirstPageOnly = _pRefs.firstpage.checked;
-    prefs.scrapeSpeed = _pRefs.speed.value;
+    prefs.searchSpeed = _pRefs.speed.value;
     prefs.targetCompanies = _pRefs.companies.value.split(",").map(s => s.trim()).filter(Boolean);
     prefs.postDateFilter = _pRefs.postdate.value;
     await Storage.savePreferences(prefs);
     await Storage.setState({ stopRequested: false });
     _pRefs.searchlog.innerHTML = '';
     panelSetProgress({ completed: 0, total: 0 });
-    panelPost({ action: "startScraping", config: prefs });
+    panelPost({ action: "startSearching", config: prefs });
   });
 
   _pRefs.stop.addEventListener("click", () => {
     panelSearchLog("Stop requested", "warn");
-    panelPost({ action: "stopScraping" });
+    panelPost({ action: "stopSearching" });
   });
   _pRefs.skip.addEventListener("click", () => {
     panelSearchLog("Skip requested - moving to next query", "warn");
@@ -800,7 +800,7 @@ function panelWireControls() {
     const pausing = _pRefs.pause.textContent !== "Resume";
     _pRefs.pause.textContent = pausing ? "Resume" : "Pause";
     panelSearchLog(pausing ? "Pausing search..." : "Resuming search...", pausing ? "warn" : "info");
-    panelPost({ action: pausing ? "pauseScraping" : "resumeScraping" });
+    panelPost({ action: pausing ? "pauseSearching" : "resumeSearching" });
   });
 
   _pRefs.dash.addEventListener("click", () => {
@@ -1179,7 +1179,7 @@ async function extractPostUrlWithMenu(el, knownUrn) {
 }
 
 // fix: removed onlyWithEmail filter — posts always saved; dashboard "Without Email" tab handles filtering
-async function scrapePosts(cfg) {
+async function searchPosts(cfg) {
   await waitEl(".feed-shared-update-v2, [data-urn*='activity'], li.reusable-search__result-container, [role='listitem']", 12000);
   await rand(1500, 2500);
   send("log", { text: "Expanding all see-more buttons on page..." });
@@ -1330,10 +1330,10 @@ function buildPhaseQueries(cfg, phase) {
 }
 
 // fix: returns false on navigation failure (waitEl timeout) so runAll returns early
-// and activeScrapeConfig is preserved for resumption on page reload
+// and activeSearchConfig is preserved for resumption on page reload
 async function runPhase(cfg, phase, startIdx) {
   const queries = buildPhaseQueries(cfg, phase);
-  const scraper = phase === "posts" ? scrapePosts : scrapeJobs;
+  const searcher = phase === "posts" ? searchPosts : searchJobs;
   const waitSel = phase === "posts"
     ? ".feed-shared-update-v2, li.reusable-search__result-container, [role='listitem']"
     : "[data-job-id], .jobs-search-results-list";
@@ -1350,10 +1350,10 @@ async function runPhase(cfg, phase, startIdx) {
     }
     const url = q._posts ? postsUrl(q.query, q.dateFilter !== undefined ? q.dateFilter : cfg.postDateFilter) : jobsUrl(q.keyword, q.location, cfg);
 
-    await chrome.storage.local.set({ activeScrapeConfig: { phase, idx: i, url, config: cfg } });
+    await chrome.storage.local.set({ activeSearchConfig: { phase, idx: i, url, config: cfg } });
     send("log", { text: "=== " + q.label + " ===" });
 
-    // race the whole query (navigation + scrape) against an instant skip signal
+    // race the whole query (navigation + search) against an instant skip signal
     const skipPromise = new Promise(res => { _skipResolve = res; });
     const runQuery = (async () => {
       if (!isOnCorrectPage(url)) {
@@ -1362,7 +1362,7 @@ async function runPhase(cfg, phase, startIdx) {
         if (!loaded) return { failed: true };
         await rand(2000, 3000);
       }
-      return { found: await scraper(cfg) };
+      return { found: await searcher(cfg) };
     })();
     const rq = await Promise.race([runQuery, skipPromise.then(() => ({ skipped: true }))]);
     _skipResolve = null;
@@ -1374,7 +1374,7 @@ async function runPhase(cfg, phase, startIdx) {
       const nq = queries[i + 1];
       if (nq) {
         const nurl = nq._posts ? postsUrl(nq.query, nq.dateFilter !== undefined ? nq.dateFilter : cfg.postDateFilter) : jobsUrl(nq.keyword, nq.location, cfg);
-        await chrome.storage.local.set({ activeScrapeConfig: { phase, idx: i + 1, url: nurl, config: cfg } });
+        await chrome.storage.local.set({ activeSearchConfig: { phase, idx: i + 1, url: nurl, config: cfg } });
       }
       continue;
     }
@@ -1392,15 +1392,15 @@ async function runPhase(cfg, phase, startIdx) {
 async function runAll(cfg) {
   shouldStop = false;
   _skipCurrent = false;
-  await chrome.storage.local.set({ scrapePaused: false });
-  const speed = cfg.scrapeSpeed || "normal";
+  await chrome.storage.local.set({ searchPaused: false });
+  const speed = cfg.searchSpeed || "normal";
   if (speed === "fast") _speedFactor = 0.35;
   else if (speed === "max") _speedFactor = 0;
   else _speedFactor = 1;
   const mode = cfg.searchMode || "jobs";
-  await Storage.setState({ status: "scraping", mode, totalFound: 0, stopRequested: false });
+  await Storage.setState({ status: "searching", mode, totalFound: 0, stopRequested: false });
 
-  if (await checkStop()) { await chrome.storage.local.remove("activeScrapeConfig"); return; }
+  if (await checkStop()) { await chrome.storage.local.remove("activeSearchConfig"); return; }
 
   const phases = mode === "both" ? ["jobs", "posts"] : [mode === "posts" ? "posts" : "jobs"];
 
@@ -1408,8 +1408,8 @@ async function runAll(cfg) {
   _progress.total = phaseCounts.reduce((a, b) => a + b, 0);
   _progress.completed = 0;
 
-  const saved = await chrome.storage.local.get("activeScrapeConfig");
-  let sc = saved.activeScrapeConfig;
+  const saved = await chrome.storage.local.get("activeSearchConfig");
+  let sc = saved.activeSearchConfig;
   let phaseStart = sc ? phases.indexOf(sc.phase) : 0;
   if (phaseStart < 0) phaseStart = 0;
 
@@ -1427,40 +1427,40 @@ async function runAll(cfg) {
     sc = null;
   }
 
-  await chrome.storage.local.remove("activeScrapeConfig");
+  await chrome.storage.local.remove("activeSearchConfig");
   await Storage.setState({ status: "idle", mode, totalFound: 0, stopRequested: false });
   shouldStop = false;
   _progress.completed = _progress.total;
   broadcastProgress();
-  send("scrapingComplete", {});
+  send("searchingComplete", {});
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // Route extension-wide broadcasts into the in-page panel (same messages the
-  // popup/dashboard listen to). Local scrape logs/progress come via send().
+  // popup/dashboard listen to). Local search logs/progress come via send().
   try {
-    if (msg && msg.action && ["composeLog", "statsUpdate", "scrapeControl", "scrapingComplete", "log", "progress"].includes(msg.action)) {
+    if (msg && msg.action && ["composeLog", "statsUpdate", "searchControl", "searchingComplete", "log", "progress"].includes(msg.action)) {
       if (msg.action === "composeLog") panelComposeLog(msg);
       else if (msg.action === "statsUpdate") { if (_pRefs.total) { _pRefs.total.textContent = msg.stats.total; _pRefs.email.textContent = msg.stats.withEmail; _pRefs.sent.textContent = msg.stats.composed; } }
-      else if (msg.action === "scrapeControl") panelHandleControl(msg);
-      else if (msg.action === "scrapingComplete") { panelSetSearchUI(false); panelSetProgress({ completed: 0, total: 0 }); }
+      else if (msg.action === "searchControl") panelHandleControl(msg);
+      else if (msg.action === "searchingComplete") { panelSetSearchUI(false); panelSetProgress({ completed: 0, total: 0 }); }
       else if (msg.action === "log") panelSearchLog(msg.text || "", "info");
       else if (msg.action === "progress") panelSetProgress(msg);
     }
   } catch (e) {}
-  if (msg.action === "startScraping") {
+  if (msg.action === "startSearching") {
     sendResponse({ ok: true });
     shouldStop = false;
-    // clear stale activeScrapeConfig so fresh start never resumes an old session
-    chrome.storage.local.remove("activeScrapeConfig").then(() =>
+    // clear stale activeSearchConfig so fresh start never resumes an old session
+    chrome.storage.local.remove("activeSearchConfig").then(() =>
       runAll(msg.config || {}).catch(e => send("log", { text: "Error: " + e.message }))
     );
     return true;
   }
-  if (msg.action === "stopScraping") { sendResponse({ ok: true }); shouldStop = true; Storage.setState({ stopRequested: true }); }
+  if (msg.action === "stopSearching") { sendResponse({ ok: true }); shouldStop = true; Storage.setState({ stopRequested: true }); }
   if (msg.action === "skipQuery") { sendResponse({ ok: true }); triggerSkip(); }
-  if (msg.action === "pauseScraping") { sendResponse({ ok: true }); chrome.storage.local.set({ scrapePaused: true }); }
-  if (msg.action === "resumeScraping") { sendResponse({ ok: true }); chrome.storage.local.set({ scrapePaused: false }); }
+  if (msg.action === "pauseSearching") { sendResponse({ ok: true }); chrome.storage.local.set({ searchPaused: true }); }
+  if (msg.action === "resumeSearching") { sendResponse({ ok: true }); chrome.storage.local.set({ searchPaused: false }); }
   if (msg.action === "getContextMenuInfo") { sendResponse({ context: _manualContext || {} }); }
   if (msg.action === "devLog") { ljfLog(msg.text || msg.message || ""); sendResponse({ ok: true }); }
   if (msg.action === "pasteConnectionNote") {
@@ -1498,14 +1498,14 @@ chrome.storage.onChanged.addListener((changes, area) => {
   const prefs = await Storage.getPreferences();
   panelSyncFromPrefs(prefs);
   try { panelSearchLog("Panel ready. LJF content script active on: " + location.pathname); } catch (e) {}
-  const saved = await chrome.storage.local.get("activeScrapeConfig");
-  const sc = saved.activeScrapeConfig;
+  const saved = await chrome.storage.local.get("activeSearchConfig");
+  const sc = saved.activeSearchConfig;
   if (!sc || !sc.config) return;
-  if (await checkStop()) { await chrome.storage.local.remove("activeScrapeConfig"); await Storage.setState({ stopRequested: false, status: "idle" }); return; }
+  if (await checkStop()) { await chrome.storage.local.remove("activeSearchConfig"); await Storage.setState({ stopRequested: false, status: "idle" }); return; }
   const isOnSearch = window.location.href.includes("/jobs/search") || window.location.href.includes("/search/results/content");
   if (isOnSearch) {
     await rand(500, 1000);
-    send("log", { text: "Resuming scrape session..." });
+    send("log", { text: "Resuming search session..." });
     await runAll(sc.config);
   }
 })();

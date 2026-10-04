@@ -1,6 +1,6 @@
 # LinkedIn Job Finder Chrome Extension
 
-A Chrome extension to scrape LinkedIn job listings and posts, extract email addresses, track applications, and export data to CSV/XLS.
+A Chrome extension to search LinkedIn job listings and posts, extract email addresses, track applications, and export data to CSV/XLS.
 
 > ⭐ **Star this repo** if you find it useful!
 
@@ -61,13 +61,13 @@ git clone -b main https://github.com/nachiiiket/linkedin_job_search_chrome_exten
 
 ---
 
-## Scraping Speed Options
+## Search Speed Options
 
 | Option | Multiplier | Description |
 |--------|-----------|-------------|
 | **Normal** | 1x | Full random delays — safest for avoiding rate limits |
-| **Fast** | ~0.35x | Reduced delays — faster scraping, moderate risk |
-| **Max** | 0x | No delays — fastest scraping |
+| **Fast** | ~0.35x | Reduced delays — faster search, moderate risk |
+| **Max** | 0x | No delays — fastest search |
 
 > ⚠️ **WARNING**: **Max speed (0x delay) is NOT recommended.** It removes all delays between actions, which can:
 > - Trigger LinkedIn's bot detection mechanisms
@@ -82,15 +82,15 @@ git clone -b main https://github.com/nachiiiket/linkedin_job_search_chrome_exten
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| **Job Roles** | 17 AI/ML roles (AI Engineer, ML Engineer, Data Scientist, etc.) | Keywords to search for in jobs and posts. One per line. The scraper checks if the post/job matches these keywords using partial matching (70% word threshold for multi-word roles). |
+| **Job Roles** | 17 AI/ML roles (AI Engineer, ML Engineer, Data Scientist, etc.) | Keywords to search for in jobs and posts. One per line. The searcher checks if the post/job matches these keywords using partial matching (70% word threshold for multi-word roles). |
 | **Locations** | Pune, Bangalore, Hyderabad | Target cities for job search. One per line. |
 | **Target Companies** | (empty) | Company names to include in **post** searches. When set, the post search query becomes: `"Hiring" AND "<role>" AND "<company>"`. |
 | **Easy Apply Only** | Enabled | Filters job search to show only LinkedIn Easy Apply listings (`f_AL=true`). |
 | **Posted Within Days** | 1 day | Recency filter for jobs. Maps to: 1 day (`r86400`), 7 days (`r604800`), or 30 days (`r2592000`). |
-| **First Page Only** | Enabled | When enabled, only scrapes the first page of job results. Disable to paginate through all available pages. |
+| **First Page Only** | Enabled | When enabled, only searches the first page of job results. Disable to paginate through all available pages. |
 | **Only Save With Email** | Disabled | When enabled, only saves entries that contain detected email addresses. Highly recommended for **Posts** mode to get direct-contact leads. |
-| **Max Per Run** | 50 | Maximum number of items to collect in a single scraping session. |
-| **Scrape Speed** | Normal | Controls delay between actions: Normal (safe), Fast (risky), Max (not recommended). |
+| **Max Per Run** | 50 | Maximum number of items to collect in a single searching session. |
+| **Search Speed** | Normal | Controls delay between actions: Normal (safe), Fast (risky), Max (not recommended). |
 | **Search Mode** | Jobs | Selector in the popup — **Jobs**, **Posts**, or **Both** (runs jobs first, then posts). |
 
 ---
@@ -104,7 +104,7 @@ git clone -b main https://github.com/nachiiiket/linkedin_job_search_chrome_exten
 3. Toggle filters: *Only save with email*, *First page only*
 4. Select **Speed** (keep Normal for safety)
 5. Optionally enter **Target Companies** for post search
-6. Click **Start Scraping**
+6. Click **Start Searching**
 7. Watch the live log panel for progress
 8. Click **Stop** anytime to interrupt
 
@@ -112,7 +112,7 @@ git clone -b main https://github.com/nachiiiket/linkedin_job_search_chrome_exten
 
 1. Click **Dashboard** in the popup, or open `dashboard.html`
 2. Configure all preferences and click **Save**
-3. Click **Start** to begin scraping with the saved settings
+3. Click **Start** to begin searching with the saved settings
 
 ### Recommended: Posts with Emails
 
@@ -135,13 +135,13 @@ This will only collect posts that contain email addresses — giving you direct 
 | **Open Links** | Click "Open" to visit the job/post URL, "Profile" to view the poster's LinkedIn profile |
 | **Export CSV** | Downloads all results as a CSV file |
 | **Export XLS** | Downloads all results as an Excel-compatible XLS file |
-| **Clear Data** | Deletes all scraped results |
+| **Clear Data** | Deletes all searched results |
 | **Collapsible Sidebar** | Toggle the preferences sidebar with the ◀ / ▶ buttons |
 | **Email Extraction** | Automatically detects emails including obfuscated formats: `[at]`, `(dot)`, `{at}`, `[remove]`, and `mailto:` links |
 
 ---
 
-## How Scraping Works
+## How Searching Works
 
 ### Job Search
 
@@ -170,7 +170,7 @@ This will only collect posts that contain email addresses — giving you direct 
 
 ### Resume Support
 
-If the page is reloaded while scraping, the extension saves the current phase, query index, and URL. On the next page load, it automatically resumes from where it left off.
+If the page is reloaded while searching, the extension saves the current phase, query index, and URL. On the next page load, it automatically resumes from where it left off.
 
 ---
 
@@ -178,11 +178,11 @@ If the page is reloaded while scraping, the extension saves the current phase, q
 
 | Permission | Reason |
 |------------|--------|
-| `storage` | Save scraped job data and user preferences locally |
+| `storage` | Save searched job data and user preferences locally |
 | `downloads` | Export results as CSV or XLS files |
 | `tabs` | Find and interact with LinkedIn tabs |
-| `notifications` | Show desktop notifications for scraping start/complete |
-| `https://*.linkedin.com/*` | Access LinkedIn pages for scraping |
+| `notifications` | Show desktop notifications for searching start/complete |
+| `https://*.linkedin.com/*` | Access LinkedIn pages for searching |
 
 ---
 
@@ -192,7 +192,7 @@ If the page is reloaded while scraping, the extension saves the current phase, q
 - **Preferences not saving in dashboard**: Refresh the dashboard page — it may need a reload on first startup
 - **Extension not responding**: Refresh the LinkedIn page and try again
 - **No results found**: Make sure you are signed in to LinkedIn
-- **Scraping stuck**: Click **Stop** and restart. Try reducing `Max Per Run`
+- **Searching stuck**: Click **Stop** and restart. Try reducing `Max Per Run`
 - **Posts mode finds nothing**: Disable "Only save with email" temporarily to see if posts are being detected
 - **Dashboard shows old data**: Click **Refresh** (or close and reopen the dashboard)
 - **Service worker died**: Chrome MV3 unloads the service worker after ~5 minutes of inactivity. The extension auto-reconnects when you open the popup
@@ -210,7 +210,7 @@ If the page is reloaded while scraping, the extension saves the current phase, q
 
 ## Disclaimer
 
-This extension is provided **for educational and personal use only**. Scraping LinkedIn may violate LinkedIn's User Agreement. Use at your own risk. The author is not responsible for any misuse or any violations of platform terms of service.
+This extension is provided **for educational and personal use only**. Searching LinkedIn may violate LinkedIn's User Agreement. Use at your own risk. The author is not responsible for any misuse or any violations of platform terms of service.
 
 ---
 

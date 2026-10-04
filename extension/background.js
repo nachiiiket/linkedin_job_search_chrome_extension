@@ -452,10 +452,10 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
     handleAutoSendJob(msg.job);
     return false;
   }
-  if (msg.action === "scrapingComplete") {
-    notify("Scraping Complete", "All searches finished.");
+  if (msg.action === "searchingComplete") {
+    notify("Searching Complete", "All searches finished.");
     Storage.setState({ status: "idle", mode: "jobs", totalFound: 0 });
-    chrome.runtime.sendMessage({ action: "scrapingComplete" }).catch(() => {});
+    chrome.runtime.sendMessage({ action: "searchingComplete" }).catch(() => {});
     updateBadge();
     handleAutoSendFlush();
     return false;
@@ -467,19 +467,19 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
     chrome.tabs.create({ url: chrome.runtime.getURL("dashboard.html") });
     return false;
   }
-  if (msg.action === "startScraping") { startScraping(msg.config); return false; }
-  if (msg.action === "stopScraping") { stopScraping(); return false; }
-  if (msg.action === "skipQuery" || msg.action === "pauseScraping" || msg.action === "resumeScraping") {
-    if (msg.action === "skipQuery") { if (activeTabId) chrome.tabs.sendMessage(activeTabId, { action: "skipQuery" }).catch(() => {}); broadcastScrapeControl("skipped"); }
-    if (msg.action === "pauseScraping") { chrome.storage.local.set({ scrapePaused: true }, () => { if (activeTabId) chrome.tabs.sendMessage(activeTabId, { action: "pauseScraping" }).catch(() => {}); broadcastScrapeControl("paused"); }); }
-    if (msg.action === "resumeScraping") { chrome.storage.local.set({ scrapePaused: false }, () => { if (activeTabId) chrome.tabs.sendMessage(activeTabId, { action: "resumeScraping" }).catch(() => {}); broadcastScrapeControl("resumed"); }); }
+  if (msg.action === "startSearching") { startSearching(msg.config); return false; }
+  if (msg.action === "stopSearching") { stopSearching(); return false; }
+  if (msg.action === "skipQuery" || msg.action === "pauseSearching" || msg.action === "resumeSearching") {
+    if (msg.action === "skipQuery") { if (activeTabId) chrome.tabs.sendMessage(activeTabId, { action: "skipQuery" }).catch(() => {}); broadcastSearchControl("skipped"); }
+    if (msg.action === "pauseSearching") { chrome.storage.local.set({ searchPaused: true }, () => { if (activeTabId) chrome.tabs.sendMessage(activeTabId, { action: "pauseSearching" }).catch(() => {}); broadcastSearchControl("paused"); }); }
+    if (msg.action === "resumeSearching") { chrome.storage.local.set({ searchPaused: false }, () => { if (activeTabId) chrome.tabs.sendMessage(activeTabId, { action: "resumeSearching" }).catch(() => {}); broadcastSearchControl("resumed"); }); }
     return false;
   }
 });
 
 chrome.action.onClicked.addListener(() => { chrome.runtime.openOptionsPage(); });
 
-async function startScraping(config) {
+async function startSearching(config) {
   const tab = await getLinkedInTab();
   if (!tab) { notify("LinkedIn Required", "Open a LinkedIn tab first."); return; }
   activeTabId = tab.id;
@@ -487,32 +487,32 @@ async function startScraping(config) {
   const ready = await isContentScriptReady(tab.id);
   if (!ready) { notify("Reload LinkedIn", "Please refresh the LinkedIn page for the extension to load."); return; }
 
-  await Storage.setState({ status: "scraping", mode: config.searchMode || "jobs", totalFound: 0 });
+  await Storage.setState({ status: "searching", mode: config.searchMode || "jobs", totalFound: 0 });
   const modeLabel = config.searchMode === "posts" ? "posts" : "jobs";
-  notify("Scraping Started", "Searching " + (config.jobRoles || []).length + " roles in " + modeLabel);
+  notify("Searching Started", "Searching " + (config.jobRoles || []).length + " roles in " + modeLabel);
 
-  chrome.tabs.sendMessage(tab.id, { action: "startScraping", config }).catch(() => {});
+  chrome.tabs.sendMessage(tab.id, { action: "startSearching", config }).catch(() => {});
 }
 
-async function stopScraping() {
-  if (activeTabId) { chrome.tabs.sendMessage(activeTabId, { action: "stopScraping" }).catch(() => {}); }
-  await chrome.storage.local.set({ scrapePaused: false });
+async function stopSearching() {
+  if (activeTabId) { chrome.tabs.sendMessage(activeTabId, { action: "stopSearching" }).catch(() => {}); }
+  await chrome.storage.local.set({ searchPaused: false });
   await Storage.setState({ status: "idle", mode: "jobs", totalFound: 0, stopRequested: false });
-  notify("Scraping Stopped", "The scraper was stopped.");
+  notify("Searching Stopped", "The search was stopped.");
 }
 
-function broadcastScrapeControl(type) {
-  chrome.runtime.sendMessage({ action: "scrapeControl", type }).catch(() => {});
+function broadcastSearchControl(type) {
+  chrome.runtime.sendMessage({ action: "searchControl", type }).catch(() => {});
 }
 
 chrome.runtime.onConnect.addListener(port => {
   if (port.name === "popup") {
     port.onMessage.addListener(async msg => {
-      if (msg.action === "startScraping") { await startScraping(msg.config); port.postMessage({ action: "started" }); }
-      if (msg.action === "stopScraping") { await stopScraping(); port.postMessage({ action: "stopped" }); }
-      if (msg.action === "skipQuery") { if (activeTabId) chrome.tabs.sendMessage(activeTabId, { action: "skipQuery" }).catch(() => {}); broadcastScrapeControl("skipped"); }
-      if (msg.action === "pauseScraping") { await chrome.storage.local.set({ scrapePaused: true }); if (activeTabId) chrome.tabs.sendMessage(activeTabId, { action: "pauseScraping" }).catch(() => {}); broadcastScrapeControl("paused"); }
-      if (msg.action === "resumeScraping") { await chrome.storage.local.set({ scrapePaused: false }); if (activeTabId) chrome.tabs.sendMessage(activeTabId, { action: "resumeScraping" }).catch(() => {}); broadcastScrapeControl("resumed"); }
+      if (msg.action === "startSearching") { await startSearching(msg.config); port.postMessage({ action: "started" }); }
+      if (msg.action === "stopSearching") { await stopSearching(); port.postMessage({ action: "stopped" }); }
+      if (msg.action === "skipQuery") { if (activeTabId) chrome.tabs.sendMessage(activeTabId, { action: "skipQuery" }).catch(() => {}); broadcastSearchControl("skipped"); }
+      if (msg.action === "pauseSearching") { await chrome.storage.local.set({ searchPaused: true }); if (activeTabId) chrome.tabs.sendMessage(activeTabId, { action: "pauseSearching" }).catch(() => {}); broadcastSearchControl("paused"); }
+      if (msg.action === "resumeSearching") { await chrome.storage.local.set({ searchPaused: false }); if (activeTabId) chrome.tabs.sendMessage(activeTabId, { action: "resumeSearching" }).catch(() => {}); broadcastSearchControl("resumed"); }
       if (msg.action === "getState") { const s = await Storage.getState(); const st = await Storage.getStats(); port.postMessage({ action: "state", state: s, stats: st }); }
       if (msg.action === "openDashboard") { chrome.tabs.create({ url: chrome.runtime.getURL("dashboard.html") }); }
       if (msg.action === "enableComposeMode") {
@@ -536,11 +536,11 @@ chrome.runtime.onConnect.addListener(port => {
 
   if (port.name === "dashboard") {
     port.onMessage.addListener(async msg => {
-      if (msg.action === "startScraping") { await startScraping(msg.config); }
-      if (msg.action === "stopScraping") { await stopScraping(); }
-      if (msg.action === "skipQuery") { if (activeTabId) chrome.tabs.sendMessage(activeTabId, { action: "skipQuery" }).catch(() => {}); broadcastScrapeControl("skipped"); }
-      if (msg.action === "pauseScraping") { await chrome.storage.local.set({ scrapePaused: true }); if (activeTabId) chrome.tabs.sendMessage(activeTabId, { action: "pauseScraping" }).catch(() => {}); broadcastScrapeControl("paused"); }
-      if (msg.action === "resumeScraping") { await chrome.storage.local.set({ scrapePaused: false }); if (activeTabId) chrome.tabs.sendMessage(activeTabId, { action: "resumeScraping" }).catch(() => {}); broadcastScrapeControl("resumed"); }
+      if (msg.action === "startSearching") { await startSearching(msg.config); }
+      if (msg.action === "stopSearching") { await stopSearching(); }
+      if (msg.action === "skipQuery") { if (activeTabId) chrome.tabs.sendMessage(activeTabId, { action: "skipQuery" }).catch(() => {}); broadcastSearchControl("skipped"); }
+      if (msg.action === "pauseSearching") { await chrome.storage.local.set({ searchPaused: true }); if (activeTabId) chrome.tabs.sendMessage(activeTabId, { action: "pauseSearching" }).catch(() => {}); broadcastSearchControl("paused"); }
+      if (msg.action === "resumeSearching") { await chrome.storage.local.set({ searchPaused: false }); if (activeTabId) chrome.tabs.sendMessage(activeTabId, { action: "resumeSearching" }).catch(() => {}); broadcastSearchControl("resumed"); }
       if (msg.action === "getState") { const s = await Storage.getState(); const st = await Storage.getStats(); port.postMessage({ action: "state", state: s, stats: st }); }
       if (msg.action === "getJobs") { const j = await Storage.getJobs(); port.postMessage({ action: "jobs", jobs: j }); }
       if (msg.action === "exportCSV") { Exporter.downloadCSV(await Storage.getJobs()); }
