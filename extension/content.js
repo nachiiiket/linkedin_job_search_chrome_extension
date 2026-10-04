@@ -412,59 +412,88 @@ let _pRefs = {};
 let _pLastCompose = "";
 
 const PANEL_CSS = `
-#ljf-panel{position:fixed;right:0;top:0;width:380px;height:100vh;z-index:2147483646;
-  background:#fff;box-shadow:-4px 0 16px rgba(0,0,0,.18);display:flex;flex-direction:column;
-  font:13px/1.4 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1a1a1a}
+#ljf-panel{position:fixed;right:0;top:0;bottom:0;width:396px;z-index:2147483646;
+  background:#f4f6fa;box-shadow:-8px 0 24px rgba(8,28,58,.16);display:flex;flex-direction:column;
+  font:13px/1.4 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1f2a37;
+  border-radius:14px 0 0 14px;overflow:hidden;transition:right .25s ease}
 #ljf-panel *{box-sizing:border-box;margin:0;padding:0}
-#ljf-panel .ljf-head{display:flex;align-items:center;gap:8px;padding:10px 12px;
-  background:#0a66c2;color:#fff;flex-shrink:0}
-#ljf-panel .ljf-title{font-weight:700;flex:1;font-size:13px;white-space:nowrap;overflow:hidden}
-#ljf-panel .ljf-status{background:rgba(255,255,255,.2);padding:2px 8px;border-radius:10px;
-  font-size:11px;font-weight:600}
-#ljf-panel .ljf-status.on{background:#34a853}
-#ljf-panel button{cursor:pointer}
-#ljf-panel .ljf-collapse{background:transparent;border:none;color:#fff;font-size:16px;line-height:1}
-#ljf-panel .ljf-tabs{display:flex;flex-shrink:0;border-bottom:1px solid #e0e0e0}
-#ljf-panel .ljf-tab{flex:1;padding:8px 0;background:#f4f5f7;border:none;border-bottom:2px solid transparent;
-  font-size:12px;font-weight:600;color:#888}
-#ljf-panel .ljf-tab.active{background:#fff;color:#0a66c2;border-bottom-color:#0a66c2}
-#ljf-panel .ljf-tabpane{display:none;flex-direction:column;flex:1;min-height:0;padding:10px 12px;overflow:hidden}
+#ljf-panel button{cursor:pointer;font-family:inherit}
+#ljf-panel .ljf-head{display:flex;align-items:center;gap:10px;padding:14px;flex-shrink:0;
+  background:linear-gradient(135deg,#0a66c2 0%,#004182 62%,#03315a 100%);color:#fff;
+  box-shadow:0 2px 10px rgba(4,45,86,.28)}
+#ljf-panel .ljf-logo{width:28px;height:28px;border-radius:8px;flex-shrink:0;object-fit:cover;
+  box-shadow:0 2px 4px rgba(0,0,0,.28);background:#fff}
+#ljf-panel .ljf-title{font-weight:700;flex:1;font-size:14px;letter-spacing:.2px;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+#ljf-panel .ljf-status{background:rgba(255,255,255,.16);padding:3px 10px;border-radius:12px;
+  font-size:11px;font-weight:700;letter-spacing:.3px;backdrop-filter:blur(2px)}
+#ljf-panel .ljf-status.on{background:#34a853;box-shadow:0 0 0 3px rgba(52,168,83,.28)}
+#ljf-panel .ljf-collapse{background:transparent;border:none;color:#fff;width:28px;height:28px;
+  border-radius:50%;display:flex;align-items:center;justify-content:center;transition:background .15s}
+#ljf-panel .ljf-collapse:hover{background:rgba(255,255,255,.2)}
+#ljf-panel .ljf-restore{display:none;position:fixed;right:14px;top:14px;z-index:2147483647;width:44px;height:44px;
+  border-radius:12px;border:none;padding:0;align-items:center;justify-content:center;
+  background:linear-gradient(135deg,#0a66c2,#004182);box-shadow:0 6px 18px rgba(4,45,86,.4);color:#fff}
+#ljf-panel .ljf-restore:hover{transform:translateY(-1px)}
+#ljf-panel.ljf-hidden .ljf-restore{display:flex}
+#ljf-panel.ljf-hidden{right:-404px}
+#ljf-panel .ljf-tabs{display:flex;gap:4px;margin:10px 14px 0;padding:4px;background:#e7ebf1;
+  border-radius:11px;flex-shrink:0}
+#ljf-panel .ljf-tab{flex:1;padding:7px 0;background:transparent;border:none;border-radius:8px;
+  font-size:12px;font-weight:700;color:#6b7681;transition:all .18s}
+#ljf-panel .ljf-tab:hover{color:#0a66c2}
+#ljf-panel .ljf-tab.active{background:#fff;color:#0a66c2;box-shadow:0 1px 4px rgba(10,45,80,.16)}
+#ljf-panel .ljf-tabpane{display:none;flex-direction:column;flex:1;min-height:0;padding:12px 14px;overflow:hidden}
 #ljf-panel .ljf-tabpane.active{display:flex}
-#ljf-panel .ljf-stats{display:flex;gap:16px;justify-content:center;margin-bottom:8px;flex-shrink:0}
-#ljf-panel .ljf-stat{text-align:center}
-#ljf-panel .ljf-stat span.ljf-num{display:block;font-size:20px;font-weight:700;color:#0a66c2}
-#ljf-panel .ljf-stat span.ljf-lbl{font-size:10px;color:#888;text-transform:uppercase;letter-spacing:.4px}
-#ljf-panel .ljf-progress{display:flex;align-items:center;gap:8px;margin-bottom:8px}
-#ljf-panel .ljf-bar{flex:1;height:8px;background:#e0e0e0;border-radius:4px;overflow:hidden}
-#ljf-panel .ljf-fill{height:100%;width:0%;background:linear-gradient(90deg,#0a66c2,#57b5e5);transition:width .4s}
-#ljf-panel .ljf-progtext{font-size:11px;font-weight:600;color:#666;white-space:nowrap}
-#ljf-panel .ljf-field{display:flex;align-items:center;gap:8px;margin-bottom:8px}
-#ljf-panel .ljf-field label{font-size:12px;font-weight:600;color:#555;width:96px;flex-shrink:0}
-#ljf-panel .ljf-field select,#ljf-panel .ljf-field input{flex:1;min-width:0;padding:5px 7px;
-  border:1px solid #ddd;border-radius:5px;font-size:12px}
-#ljf-panel .ljf-field select:disabled{opacity:.5}
-#ljf-panel .ljf-checks{display:flex;gap:12px;margin-bottom:8px;flex-shrink:0;flex-wrap:wrap}
-#ljf-panel .ljf-checks label{font-size:12px;color:#555;display:flex;align-items:center;gap:4px}
-#ljf-panel .ljf-actions{display:flex;gap:6px;margin-bottom:8px;flex-shrink:0;flex-wrap:wrap}
-#ljf-panel .ljf-btn{padding:6px 12px;border:none;border-radius:5px;font-size:12px;font-weight:600;
-  background:#e0e0e0;color:#333}
-#ljf-panel .ljf-btn:hover{background:#ccc}
-#ljf-panel .ljf-btn.ljf-primary{background:#0a66c2;color:#fff}
-#ljf-panel .ljf-btn.ljf-primary:hover{background:#004182}
-#ljf-panel .ljf-btn.ljf-danger{background:#d32f2f;color:#fff}
-#ljf-panel .ljf-btn.ljf-danger:hover{background:#b71c1c}
-#ljf-panel .ljf-loghead{font-size:10px;font-weight:700;color:#888;text-transform:uppercase;
-  letter-spacing:.5px;margin:2px 0 4px;flex-shrink:0}
-#ljf-panel .ljf-log{flex:1;min-height:60px;overflow-y:auto;background:#fafafa;border:1px solid #eee;
-  border-radius:6px;padding:4px 6px;font-size:11px;line-height:1.45;color:#444}
-#ljf-panel .ljf-log .ljf-l{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:1px 0;
-  border-bottom:1px solid #f2f2f2}
+#ljf-panel .ljf-stats{display:flex;gap:8px;margin-bottom:12px;flex-shrink:0}
+#ljf-panel .ljf-stat{flex:1;text-align:center;background:#fff;border:1px solid #e6eaf0;
+  border-radius:12px;padding:10px 4px 8px;box-shadow:0 1px 2px rgba(10,30,60,.05)}
+#ljf-panel .ljf-stat span.ljf-num{display:block;font-size:22px;font-weight:800;color:#0a66c2;letter-spacing:-.5px}
+#ljf-panel .ljf-stat span.ljf-lbl{font-size:10px;color:#8a94a0;text-transform:uppercase;letter-spacing:.5px;font-weight:600}
+#ljf-panel .ljf-progress{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+#ljf-panel .ljf-bar{flex:1;height:8px;background:#e0e6ee;border-radius:99px;overflow:hidden}
+#ljf-panel .ljf-fill{height:100%;width:0%;background:linear-gradient(90deg,#0a66c2,#57b5e5);border-radius:99px;transition:width .4s}
+#ljf-panel .ljf-progtext{font-size:11px;font-weight:700;color:#5b6672;white-space:nowrap}
+#ljf-panel .ljf-field{display:flex;align-items:center;gap:10px;margin-bottom:9px}
+#ljf-panel .ljf-field label{font-size:12px;font-weight:600;color:#4b5563;width:82px;flex-shrink:0}
+#ljf-panel .ljf-field select,#ljf-panel .ljf-field input{flex:1;min-width:0;padding:7px 9px;
+  border:1px solid #d3dae3;border-radius:9px;font-size:12px;color:#1f2a37;background:#fff;
+  transition:border-color .15s,box-shadow .15s}
+#ljf-panel .ljf-field select:focus,#ljf-panel .ljf-field input:focus{outline:none;border-color:#0a66c2;
+  box-shadow:0 0 0 3px rgba(10,102,194,.16)}
+#ljf-panel .ljf-field select:disabled{opacity:.5;background:#f1f3f6}
+#ljf-panel .ljf-checks{display:flex;gap:8px;margin-bottom:9px;flex-shrink:0;flex-wrap:wrap}
+#ljf-panel .ljf-checks label{font-size:12px;color:#374151;display:flex;align-items:center;gap:6px;
+  background:#fff;border:1px solid #e2e8f0;padding:5px 10px;border-radius:99px;cursor:pointer;user-select:none;
+  transition:all .15s}
+#ljf-panel .ljf-checks label:hover{border-color:#c3d2e4}
+#ljf-panel .ljf-checks label:has(input:checked){border-color:#0a66c2;background:#e9f2fc;color:#0a66c2}
+#ljf-panel .ljf-checks input{accent-color:#0a66c2}
+#ljf-panel .ljf-actions{display:flex;gap:8px;margin-bottom:10px;flex-shrink:0;flex-wrap:wrap}
+#ljf-panel .ljf-btn{padding:7px 14px;border:none;border-radius:9px;font-size:12px;font-weight:700;color:#374151;
+  background:#eef1f5;transition:all .15s;box-shadow:0 1px 1px rgba(10,30,60,.05)}
+#ljf-panel .ljf-btn:hover{background:#dfe5ec;transform:translateY(-1px)}
+#ljf-panel .ljf-btn:active{transform:translateY(0)}
+#ljf-panel .ljf-btn.ljf-primary{background:linear-gradient(135deg,#0a66c2,#0951a0);color:#fff;
+  box-shadow:0 2px 6px rgba(10,102,194,.35)}
+#ljf-panel .ljf-btn.ljf-primary:hover{background:linear-gradient(135deg,#0b74d6,#0a66c2)}
+#ljf-panel .ljf-btn.ljf-danger{background:#dc2626;color:#fff;box-shadow:0 2px 6px rgba(220,38,38,.3)}
+#ljf-panel .ljf-btn.ljf-danger:hover{background:#b91c1c}
+#ljf-panel .ljf-loghead{font-size:10px;font-weight:800;color:#8a94a0;text-transform:uppercase;
+  letter-spacing:.7px;margin:2px 0 6px;flex-shrink:0}
+#ljf-panel .ljf-log{flex:1;min-height:60px;overflow-y:auto;background:#fff;border:1px solid #e8edf3;
+  border-radius:12px;padding:6px 8px;font-size:11px;line-height:1.5;color:#4b5563}
+#ljf-panel .ljf-log::-webkit-scrollbar{width:8px}
+#ljf-panel .ljf-log::-webkit-scrollbar-thumb{background:#ccd4dd;border-radius:99px}
+#ljf-panel .ljf-log .ljf-l{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:2px 6px;
+  border-radius:6px}
+#ljf-panel .ljf-log .ljf-l:nth-child(even){background:#f8fafc}
 #ljf-panel .ljf-log .ljf-l.info{color:#1a56db}
-#ljf-panel .ljf-log .ljf-l.warn{color:#b8860b}
-#ljf-panel .ljf-log .ljf-l.success{color:#1e7e34}
-#ljf-panel .ljf-resume{font-size:11px;color:#2e7d32;margin-bottom:8px;flex-shrink:0}
-#ljf-panel .ljf-note{font-size:11px;color:#999;margin-top:4px;flex-shrink:0}
-#ljf-panel.ljf-hidden{right:-390px;transition:right .2s}
+#ljf-panel .ljf-log .ljf-l.warn{color:#b45309}
+#ljf-panel .ljf-log .ljf-l.success{color:#047857}
+#ljf-panel .ljf-resume{font-size:11px;font-weight:600;color:#065f46;background:#ecfdf5;border:1px solid #d1fae5;
+  padding:5px 10px;border-radius:99px;margin-bottom:10px;flex-shrink:0}
+#ljf-panel .ljf-note{font-size:11px;color:#9aa4af;margin-top:4px;flex-shrink:0}
 `;
 
 function panelInjectStyle() {
@@ -478,10 +507,16 @@ function panelInjectStyle() {
 function panelHTML() {
   return `
   <div class="ljf-head">
+    <img class="ljf-logo" src="${chrome.runtime.getURL("icons/icon_new.png")}" alt="">
     <span class="ljf-title">LinkedIn Job Finder</span>
     <span class="ljf-status" id="ljf-status">Off</span>
-    <button class="ljf-collapse" id="ljf-collapse" title="Collapse panel">&ndash;</button>
+    <button class="ljf-collapse" id="ljf-collapse" title="Collapse panel">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M6 3.5L2.5 8 6 12.5M9.5 3.5L6 8l3.5 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
   </div>
+  <button class="ljf-restore" id="ljf-restore" title="Expand panel">
+    <svg width="18" height="18" viewBox="0 0 16 16" fill="none"><path d="M10 3.5L13.5 8 10 12.5M6.5 3.5L10 8l-3.5 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </button>
   <div class="ljf-tabs">
     <button class="ljf-tab active" data-tab="search">Searching</button>
     <button class="ljf-tab" data-tab="compose">Compose</button>
@@ -603,7 +638,10 @@ function panelBuild() {
     composelog: document.getElementById("ljf-composelog")
   };
   document.getElementById("ljf-collapse").addEventListener("click", () => {
-    _panel.classList.toggle("ljf-hidden");
+    _panel.classList.add("ljf-hidden");
+  });
+  document.getElementById("ljf-restore").addEventListener("click", () => {
+    _panel.classList.remove("ljf-hidden");
   });
   document.querySelectorAll("#ljf-panel .ljf-tab").forEach(tab => {
     tab.addEventListener("click", () => {
