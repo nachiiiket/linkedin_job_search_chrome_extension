@@ -29,5 +29,11 @@
     "16": "icons/icon_new.png",
     "48": "icons/icon_new.png",
     "128": "icons/icon_new.png"
-  }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["icons/icon_new.png"],
+      "matches": ["https://*.linkedin.com/*"]
+    }
+  ]
 }
