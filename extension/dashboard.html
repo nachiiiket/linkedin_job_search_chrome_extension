@@ -71,6 +71,19 @@
               </select>
             </div>
             <div class="form-group">
+              <label class="tmpl-label">Connection Note <span class="tmpl-hint">(max 200 chars - LinkedIn limit)</span></label>
+              <textarea id="connectionNote" rows="4" maxlength="200" placeholder="Enter the note to paste on connection requests"></textarea>
+              <div class="tmpl-counter"><span id="connectionNoteCount">0</span>/200</div>
+            </div>
+            <div class="form-group">
+              <label class="tmpl-label">LinkedIn DM <span class="tmpl-hint">(no length limit)</span></label>
+              <textarea id="linkedinDm" rows="5" placeholder="Enter the DM to paste with resume attached"></textarea>
+            </div>
+            <div class="form-row">
+              <button id="btnSaveDmTemplates" class="btn btn-secondary">Save LinkedIn Templates</button>
+              <span id="dmSaveStatus" class="save-status"></span>
+            </div>
+            <div class="form-group">
               <hr style="border:none;border-top:1px solid #eee;margin:4px 0">
               <label class="checkbox-label"><input type="checkbox" id="autoSendEnabled"> Auto-send</label>
               <div id="autoSendOptions" style="display:none;margin-top:6px;font-size:12px">

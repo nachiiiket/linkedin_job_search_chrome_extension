@@ -31,7 +31,9 @@ const defaultPreferences = {
   autoSendMode: "realtime",
   batchSize: 10,
   sendMinDelay: 1000,
-  sendMaxDelay: 3000
+  sendMaxDelay: 3000,
+  connectionNote: "",
+  linkedinDm: ""
 };
 
 const Storage = {

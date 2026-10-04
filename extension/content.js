@@ -363,12 +363,18 @@ function extractPosterFromFeed(el) {
 
 /* ====== RIGHT-CLICK EMAIL CONTEXT ====== */
 let _manualContext = null;
+let _manualTarget = null;
 
 // On right-click, synchronously resolve the feed card and poster info from the
 // clicked element (if any). No menu clicks, no clipboard, no async - the post
 // url falls back to the current page URL, which the background overrides.
 function captureMenuContext(e) {
   const node = e.target instanceof Element ? e.target : (e.target ? e.target.parentElement : null);
+  _manualTarget = node;
+  try {
+    ensurePanel();
+    ljfLog("contextmenu on: " + (node ? node.tagName + "." + (node.className || "").toString().split(" ")[0] + (node.id ? "#" + node.id : "") : "none"));
+  } catch (err) {}
   const card = node ? node.closest(".feed-shared-update-v2, [data-urn*='activity'], li.reusable-search__result-container") : null;
   let poster = { poster_name: "", poster_title: "", poster_profile_url: "" };
   let position = "", company = "";
@@ -385,6 +391,220 @@ function captureMenuContext(e) {
 }
 
 document.addEventListener("contextmenu", captureMenuContext, true);
+
+/* ====== IN-PAGE DEBUG PANEL ======
+   A fixed panel on the right edge of the page so logs are visible without
+   touching devtools (which minimizes when you click LinkedIn). Logs stay in the
+   DOM and never get flushed. Background messages are routed here too. */
+let _panEl = null, _panLogEl = null, _panRows = 0;
+
+function ensurePanel() {
+  if (_panEl && document.body.contains(_panEl)) return;
+  if (document.getElementById("ljf-debug-panel")) { _panEl = document.getElementById("ljf-debug-panel"); return; }
+  _panEl = document.createElement("div");
+  _panEl.id = "ljf-debug-panel";
+  _panEl.innerHTML =
+    '<div id="ljf-dp-head">LJF Debug <button id="ljf-dp-hide">_</button> <button id="ljf-dp-testnote">Test Note</button></div>' +
+    '<div id="ljf-dp-log"></div>';
+  Object.assign(_panEl.style, {
+    position: "fixed", right: "0", top: "90px", width: "320px", maxHeight: "60vh", zIndex: "2147483646",
+    background: "#1f1f1f", color: "#d4d4d4", font: "11px/1.4 monospace", border: "1px solid #444",
+    borderRight: "none", boxShadow: "-2px 2px 8px rgba(0,0,0,.4)", display: "flex", flexDirection: "column"
+  });
+  _panLogEl = _panEl.querySelector("#ljf-dp-log");
+  Object.assign(_panLogEl.style, { overflow: "auto", flex: "1", padding: "4px 6px" });
+  _panEl.querySelector("#ljf-dp-head").style.padding = "4px 6px";
+  _panEl.querySelector("#ljf-dp-hide").addEventListener("click", () => { _panEl.style.display = "none"; });
+  _panEl.querySelector("#ljf-dp-testnote").addEventListener("click", async () => {
+    const prefs = await chrome.storage.sync.get("preferences");
+    const text = ((prefs.preferences && prefs.preferences.connectionNote) || "").slice(0, 200);
+    ljfLog("TEST NOTE button clicked; saved template len=" + text.length);
+    if (!text) { ljfLog("  -> no note saved in prefs"); return; }
+    const res = await pasteNoteWithVerify(text);
+    ljfLog("TEST NOTE result: " + JSON.stringify(res));
+  });
+  document.body.appendChild(_panEl);
+}
+
+function ljfLog(msg) {
+  try {
+    ensurePanel();
+    _panRows++;
+    const line = document.createElement("div");
+    line.style.whiteSpace = "pre-wrap";
+    line.style.wordBreak = "break-all";
+    line.style.margin = "1px 0";
+    line.style.borderBottom = "1px solid #2a2a2a";
+    line.textContent = "[" + new Date().toLocaleTimeString() + "] " + msg;
+    _panLogEl.appendChild(line);
+    while (_panLogEl.childNodes.length > 200) _panLogEl.removeChild(_panLogEl.firstChild);
+    _panLogEl.scrollTop = _panLogEl.scrollHeight;
+    _panEl.style.display = "flex";
+  } catch (e) {}
+}
+
+// Route messages from the background (notifications, paste results) into the panel.
+
+/* ====== PASTE TEMPLATE TARGETING ====== */
+
+function getEditableTarget() {
+  const candidates = [];
+  if (_manualTarget) {
+    if (_manualTarget.isConnected && _manualTarget.closest) candidates.push(_manualTarget.closest("textarea, input, [contenteditable='true'], [contenteditable='plaintext-only'], [role='textbox'], [role='combobox']") );
+  }
+  const ae = document.activeElement;
+  if (ae && ae.isConnected && ae.closest) candidates.push(ae.closest("textarea, input, [contenteditable='true'], [contenteditable='plaintext-only'], [role='textbox'], [role='combobox']"));
+  return candidates.find(c => c && (c.tagName === "TEXTAREA" || (c.tagName === "INPUT" && !["checkbox", "radio", "file", "submit", "button"].includes(c.type)) || c.isContentEditable || c.hasAttribute("contenteditable") || c.getAttribute("role") === "textbox")) || null;
+}
+
+// Fallback target locators in case the right-clicked node was re-rendered.
+function findNoteField() {
+  return document.querySelector('textarea.connect-button-send-invite__custom-message, #custom-message[name="message"], .send-invite textarea, div[role="dialog"][data-test-modal*="send"] textarea');
+}
+function findDmComposer() {
+  return document.querySelector('.msg-overlay-conversation-bubble [role="textbox"], .msg-form__msg-content-container [role="textbox"], div[role="dialog"] [contenteditable="true"][role="textbox"]');
+}
+
+function readFieldValue(el) {
+  if (!el) return "";
+  try {
+    if (el.tagName === "TEXTAREA" || el.tagName === "INPUT") return el.value || "";
+    return el.textContent || "";
+  } catch (e) { return ""; }
+}
+
+// LinkedIn's connection-note modal is a controlled React textarea that can
+// re-mount (replace the DOM node) after a synthetic input, wiping the value.
+// So: insert, wait a tick for React to flush, then RE-QUERY the live field and
+// verify it actually kept the text. Retry against the fresh node if not.
+async function pasteNoteWithVerify(text) {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const el = findNoteField() || getEditableTarget();
+    ljfLog("note attempt " + (attempt + 1) + ": found=" + (el ? el.tagName + "." + (el.className || "").toString().split(" ")[0] : "NULL"));
+    if (!el) return { ok: false, error: "Connection note field not found on the page." };
+    const beforeVal = readFieldValue(el);
+    ljfLog("  before value: \"" + beforeVal.slice(0, 40) + "\"");
+    const ins = setEditableText(el, text);
+    ljfLog("  setEditableText returned " + ins);
+    await new Promise(r => setTimeout(r, 250));
+    const fresh = findNoteField();
+    const val = readFieldValue(fresh || el);
+    ljfLog("  after 250ms value: \"" + val.slice(0, 40) + "\" (len=" + val.length + ")");
+    if (val === text || (val && val.includes(text))) return { ok: true };
+  }
+  const last = findNoteField();
+  return { ok: false, error: "Note was overwritten by LinkedIn's field. Last value: \"" + readFieldValue(last).slice(0, 40) + "\"." };
+}
+
+function setEditableText(editable, text) {
+  if (!editable) return false;
+  const readValue = () => {
+    try {
+      if (editable.tagName === "TEXTAREA" || editable.tagName === "INPUT") return editable.value || "";
+      return editable.textContent || "";
+    } catch (e) { return ""; }
+  };
+  const fireInput = () => {
+    editable.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
+    editable.dispatchEvent(new Event("change", { bubbles: true }));
+    editable.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true }));
+  };
+  try {
+    editable.focus();
+
+    // 1) React-controlled fields (e.g. LinkedIn's connection-note textarea) only
+    //    accept text set through the native prototype setter, then an input
+    //    event. This is the canonical technique; verify it really stuck.
+    if (editable.tagName === "TEXTAREA" || (editable.tagName === "INPUT" && ["text", "", "email", "search"].includes((editable.type || "").toLowerCase()))) {
+      const proto = editable.tagName === "TEXTAREA" ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+      const setter = Object.getOwnPropertyDescriptor(proto, "value");
+      if (setter && setter.set) setter.set.call(editable, text);
+      else editable.value = text;
+      fireInput();
+      if (readValue() === text) return true;
+
+      // 2) Some frameworks reset on 'input'; retry via setRangeText which
+      //    mutates the value directly.
+      try {
+        editable.select();
+        editable.setRangeText(text, editable.selectionStart, editable.selectionEnd, "end");
+        fireInput();
+        if (readValue() === text) return true;
+      } catch (e) {}
+    }
+
+    // 3) Simulate typing via execCommand (fires native beforeinput/input).
+    try {
+      if (editable.isContentEditable || editable.hasAttribute("contenteditable") || editable.getAttribute("role") === "textbox") {
+        const sel = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(editable);
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+      let inserted = false;
+      try { inserted = document.execCommand("insertText", false, text); } catch (e) {}
+      if (inserted !== false) {
+        fireInput();
+        if (readValue() === text || readValue().includes(text)) return true;
+        editable.textContent = text;
+        editable.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
+        return true;
+      }
+      throw new Error("execCommand failed");
+    } catch (e) {}
+
+    // 4) Last resort: raw textContent.
+    editable.textContent = text;
+    editable.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
+    return true;
+  } catch (e) {}
+  return false;
+}
+
+// Attach the stored resume via LinkedIn's message composer file input (reuses
+// the same FileData URL trick as the Gmail flow). Choose the file input nearest
+// to the DM composer; fall back to a visible one.
+async function attachResumeToLinkedInMessage(target) {
+  try {
+    const { resumeFile } = await chrome.storage.local.get("resumeFile");
+    if (!resumeFile) return { ok: false, error: "No resume saved." };
+    let fileInput = null;
+    const root = target ? (target.closest('[role="dialog"], .msg-overlay-conversation-bubble, .msg-form, form') || document) : document;
+    fileInput = root.querySelector('input[type="file"]');
+    if (!fileInput) {
+      const attachBtn = Array.from(root.querySelectorAll('button, [role="button"]')).find(b => /attach|clip|paperclip|\uD83D\uDCCE/i.test(b.getAttribute("aria-label") || b.title || ""));
+      if (attachBtn) {
+        attachBtn.click();
+        await new Promise(r => setTimeout(r, 500));
+        fileInput = root.querySelector('input[type="file"]');
+      }
+    }
+    if (!fileInput) fileInput = document.querySelector('input[type="file"]:not([style*="display: none"], [style*="visibility: hidden"], [aria-hidden="true"])');
+    if (!fileInput) return { ok: false, error: "No file input found on the message composer." };
+
+    const raw = resumeFile.data.includes(",") ? resumeFile.data.split(",")[1] : resumeFile.data;
+    const byteStr = atob(raw);
+    const ab = new ArrayBuffer(byteStr.length);
+    const ia = new Uint8Array(ab);
+    for (let i = 0; i < byteStr.length; i++) ia[i] = byteStr.charCodeAt(i);
+    const blob = new Blob([ab], { type: resumeFile.type || "application/pdf" });
+    const file = new File([blob], resumeFile.name, { type: resumeFile.type || "application/pdf" });
+
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "files");
+    if (nativeSetter && nativeSetter.set) {
+      nativeSetter.set.call(fileInput, dt.files);
+    } else {
+      Object.defineProperty(fileInput, "files", { value: dt.files, configurable: true });
+    }
+    fileInput.dispatchEvent(new Event("change", { bubbles: true }));
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+}
 
 function findUrnInEl(el) {
   if (!el) return "";
@@ -745,10 +965,33 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === "pauseScraping") { sendResponse({ ok: true }); chrome.storage.local.set({ scrapePaused: true }); }
   if (msg.action === "resumeScraping") { sendResponse({ ok: true }); chrome.storage.local.set({ scrapePaused: false }); }
   if (msg.action === "getContextMenuInfo") { sendResponse({ context: _manualContext || {} }); }
+  if (msg.action === "devLog") { ljfLog(msg.text || msg.message || ""); sendResponse({ ok: true }); }
+  if (msg.action === "pasteConnectionNote") {
+    const text = (msg.data && msg.data.text || "").slice(0, 200);
+    ljfLog("BG -> pasteConnectionNote, template len=" + text.length);
+    pasteNoteWithVerify(text).then(res => {
+      ljfLog("BG result: " + JSON.stringify(res));
+      sendResponse(res);
+    });
+    return true;
+  }
+  if (msg.action === "pasteLinkedInDm") {
+    let target = findDmComposer() || getEditableTarget();
+    ljfLog("BG -> pasteLinkedInDm, target=" + (target ? target.tagName : "NULL"));
+    if (!target) { sendResponse({ ok: false, error: "No message box under the cursor." }); return true; }
+    const text = (msg.data && msg.data.text || "");
+    const ok = setEditableText(target, text);
+    attachResumeToLinkedInMessage(target).then(att => {
+      ljfLog("DM result ok=" + ok + " attach=" + JSON.stringify(att));
+      sendResponse({ ok, error: ok ? (att.ok ? null : att.error) : "Could not insert into the message box." });
+    });
+    return true;
+  }
   if (msg.action === "ping") { sendResponse({ ok: true }); }
 });
 
 (async function init() {
+  try { ensurePanel(); ljfLog("Panel ready. LJF content script active on: " + location.pathname); } catch (e) {}
   const saved = await chrome.storage.local.get("activeScrapeConfig");
   const sc = saved.activeScrapeConfig;
   if (!sc || !sc.config) return;
