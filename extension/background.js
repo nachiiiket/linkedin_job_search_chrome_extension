@@ -460,6 +460,21 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
     handleAutoSendFlush();
     return false;
   }
+  // Runtime fallbacks used by the in-page panel when its port is unavailable
+  // (e.g. right after the service worker restarts). Mirrors the popup-port
+  // handlers below.
+  if (msg.action === "openDashboard") {
+    chrome.tabs.create({ url: chrome.runtime.getURL("dashboard.html") });
+    return false;
+  }
+  if (msg.action === "startScraping") { startScraping(msg.config); return false; }
+  if (msg.action === "stopScraping") { stopScraping(); return false; }
+  if (msg.action === "skipQuery" || msg.action === "pauseScraping" || msg.action === "resumeScraping") {
+    if (msg.action === "skipQuery") { if (activeTabId) chrome.tabs.sendMessage(activeTabId, { action: "skipQuery" }).catch(() => {}); broadcastScrapeControl("skipped"); }
+    if (msg.action === "pauseScraping") { chrome.storage.local.set({ scrapePaused: true }, () => { if (activeTabId) chrome.tabs.sendMessage(activeTabId, { action: "pauseScraping" }).catch(() => {}); broadcastScrapeControl("paused"); }); }
+    if (msg.action === "resumeScraping") { chrome.storage.local.set({ scrapePaused: false }, () => { if (activeTabId) chrome.tabs.sendMessage(activeTabId, { action: "resumeScraping" }).catch(() => {}); broadcastScrapeControl("resumed"); }); }
+    return false;
+  }
 });
 
 chrome.action.onClicked.addListener(() => { chrome.runtime.openOptionsPage(); });
@@ -499,6 +514,7 @@ chrome.runtime.onConnect.addListener(port => {
       if (msg.action === "pauseScraping") { await chrome.storage.local.set({ scrapePaused: true }); if (activeTabId) chrome.tabs.sendMessage(activeTabId, { action: "pauseScraping" }).catch(() => {}); broadcastScrapeControl("paused"); }
       if (msg.action === "resumeScraping") { await chrome.storage.local.set({ scrapePaused: false }); if (activeTabId) chrome.tabs.sendMessage(activeTabId, { action: "resumeScraping" }).catch(() => {}); broadcastScrapeControl("resumed"); }
       if (msg.action === "getState") { const s = await Storage.getState(); const st = await Storage.getStats(); port.postMessage({ action: "state", state: s, stats: st }); }
+      if (msg.action === "openDashboard") { chrome.tabs.create({ url: chrome.runtime.getURL("dashboard.html") }); }
       if (msg.action === "enableComposeMode") {
         composeAbort = false;
         await Storage.setComposeState(true);

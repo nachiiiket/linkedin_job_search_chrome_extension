@@ -748,14 +748,27 @@ function panelWireControls() {
     panelPost({ action: "startScraping", config: prefs });
   });
 
-  _pRefs.stop.addEventListener("click", () => panelPost({ action: "stopScraping" }));
-  _pRefs.skip.addEventListener("click", () => panelPost({ action: "skipQuery" }));
+  _pRefs.stop.addEventListener("click", () => {
+    panelSearchLog("Stop requested", "warn");
+    panelPost({ action: "stopScraping" });
+  });
+  _pRefs.skip.addEventListener("click", () => {
+    panelSearchLog("Skip requested - moving to next query", "warn");
+    panelPost({ action: "skipQuery" });
+  });
   _pRefs.pause.addEventListener("click", () => {
-    panelPost({ action: _pRefs.pause.textContent === "Resume" ? "resumeScraping" : "pauseScraping" });
+    // Update the button optimistically so the user gets instant feedback even
+    // if the reliability broadcast arrives late or the port just reconnected.
+    const pausing = _pRefs.pause.textContent !== "Resume";
+    _pRefs.pause.textContent = pausing ? "Resume" : "Pause";
+    panelSearchLog(pausing ? "Pausing search..." : "Resuming search...", pausing ? "warn" : "info");
+    panelPost({ action: pausing ? "pauseScraping" : "resumeScraping" });
   });
 
   _pRefs.dash.addEventListener("click", () => {
-    try { chrome.tabs.create({ url: chrome.runtime.getURL("dashboard.html") }); } catch (e) {}
+    // chrome.tabs.create is not available in content scripts, so open the
+    // dashboard from the background instead.
+    panelPost({ action: "openDashboard" });
   });
 
   _pRefs.compose.addEventListener("click", async () => {
@@ -774,7 +787,8 @@ function panelWireControls() {
 }
 
 function panelPost(msg) {
-  if (_pPort) { try { _pPort.postMessage(msg); } catch (e) {} }
+  if (_pPort) { try { _pPort.postMessage(msg); return; } catch (e) {} }
+  try { chrome.runtime.sendMessage(msg); } catch (e) {}
 }
 
 function panelConnect() {
