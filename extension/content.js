@@ -369,7 +369,8 @@ let _manualTarget = null;
 // clicked element (if any). No menu clicks, no clipboard, no async - the post
 // url falls back to the current page URL, which the background overrides.
 function captureMenuContext(e) {
-  const node = e.target instanceof Element ? e.target : (e.target ? e.target.parentElement : null);
+  const path = e.composedPath && e.composedPath();
+  const node = (path && path[0]) || (e.target instanceof Element ? e.target : (e.target ? e.target.parentElement : null));
   _manualTarget = node;
   try {
     ensurePanel();
@@ -458,33 +459,54 @@ function eachFrameDoc() {
   }
   return docs;
 }
-function queryInFrames(sel) {
+// Recurse into open shadow roots (LinkedIn's interop-outlet hosts the connect
+// modal inside a shadow root; document.querySelector cannot see those).
+function queryInFrames(sel, doc = document) {
+  if (!doc) return null;
+  const el = doc.querySelector(sel);
+  if (el) return el;
+  for (const host of doc.querySelectorAll("*")) {
+    if (host.shadowRoot) {
+      const inner = queryInFrames(sel, host.shadowRoot);
+      if (inner) return inner;
+    }
+  }
+  return null;
+}
+function queryAllFrames(sel) {
   for (const d of eachFrameDoc()) {
-    const el = d.querySelector(sel);
-    if (el) return el;
+    const hit = queryInFrames(sel, d);
+    if (hit) return hit;
   }
   return null;
 }
 
 function getEditableTarget() {
-  const docFor = (n) => n && n.ownerDocument ? n.ownerDocument : document;
   const isOk = (c) => c && (c.tagName === "TEXTAREA" || (c.tagName === "INPUT" && !["checkbox", "radio", "file", "submit", "button"].includes(c.type)) || c.isContentEditable || c.hasAttribute("contenteditable") || c.getAttribute("role") === "textbox");
   const resolve = (n) => n && n.isConnected && n.closest ? n.closest("textarea, input, [contenteditable='true'], [contenteditable='plaintext-only'], [role='textbox'], [role='combobox'], form textarea") : null;
   const candidates = [];
-  if (_manualTarget) candidates.push(resolve(_manualTarget));
+  if (_manualTarget) {
+    const r = resolve(_manualTarget);
+    if (r) candidates.push(r);
+    const host = _manualTarget.closest && _manualTarget.closest("[data-test-modal], .artdeco-modal, .send-invite, .msg-overlay-conversation-bubble");
+    if (host && host.shadowRoot) {
+      const inner = queryInFrames("textarea, [contenteditable='true'], [role='textbox'], input", host.shadowRoot);
+      if (inner) candidates.push(inner);
+    }
+  }
   for (const d of eachFrameDoc()) {
-    const ae = d.activeElement;
-    if (ae && ae.isConnected) { const r = resolve(ae); if (r) candidates.push(r); }
+    const ael = d.activeElement;
+    if (ael && ael.isConnected) { const r = resolve(ael); if (r) candidates.push(r); }
   }
   return candidates.find(isOk) || null;
 }
 
 // Fallback target locators in case the right-clicked node was re-rendered.
 function findNoteField() {
-  return queryInFrames('textarea.connect-button-send-invite__custom-message, #custom-message[name="message"], .send-invite textarea, div[role="dialog"][data-test-modal*="send"] textarea');
+  return queryAllFrames('textarea.connect-button-send-invite__custom-message, #custom-message[name="message"], .send-invite textarea, div[role="dialog"][data-test-modal*="send"] textarea');
 }
 function findDmComposer() {
-  return queryInFrames('.msg-overlay-conversation-bubble [role="textbox"], .msg-form__msg-content-container [role="textbox"], div[role="dialog"] [contenteditable="true"][role="textbox"]');
+  return queryAllFrames('.msg-overlay-conversation-bubble [role="textbox"], .msg-form__msg-content-container [role="textbox"], div[role="dialog"] [contenteditable="true"][role="textbox"]');
 }
 
 function readFieldValue(el) {
@@ -495,24 +517,31 @@ function readFieldValue(el) {
   } catch (e) { return ""; }
 }
 
-// LinkedIn's connection-note modal is a controlled React textarea that can
-// re-mount (replace the DOM node) after a synthetic input, wiping the value.
-// So: insert, wait a tick for React to flush, then RE-QUERY the live field and
-// verify it actually kept the text. Retry against the fresh node if not.
+// LinkedIn's connection-note modal is a controlled React textarea inside a
+// shadow root that can re-mount (replace the DOM node) after a synthetic input,
+// wiping the value. So: WAIT for the field to appear, insert, wait a tick for
+// React to flush, then RE-QUERY the live field and verify it actually kept the
+// text. Retry against the fresh node if not.
 async function pasteNoteWithVerify(text) {
-  for (let attempt = 0; attempt < 4; attempt++) {
-    const el = findNoteField() || getEditableTarget();
-    ljfLog("note attempt " + (attempt + 1) + ": found=" + (el ? el.tagName + "." + (el.className || "").toString().split(" ")[0] : "NULL"));
-    if (!el) return { ok: false, error: "Connection note field not found on the page." };
+  let el = null;
+  for (let i = 0; i < 10; i++) {
+    el = findNoteField() || getEditableTarget();
+    if (el) break;
+    await new Promise(r => setTimeout(r, 200));
+  }
+  ljfLog("note field found=" + (el ? el.tagName + "." + (el.className || "").toString().split(" ")[0] : "NULL (still not found after wait)"));
+  if (!el) return { ok: false, error: "Connection note field not found on the page." };
+  for (let attempt = 0; attempt < 4 && el; attempt++) {
     const beforeVal = readFieldValue(el);
-    ljfLog("  before value: \"" + beforeVal.slice(0, 40) + "\"");
+    ljfLog("  attempt " + (attempt + 1) + ": found=" + (el.tagName + "." + (el.className || "").toString().split(" ")[0]) + " before=\"" + beforeVal.slice(0, 40) + "\"");
     const ins = setEditableText(el, text);
     ljfLog("  setEditableText returned " + ins);
     await new Promise(r => setTimeout(r, 250));
-    const fresh = findNoteField();
-    const val = readFieldValue(fresh || el);
+    const fresh = findNoteField() || el;
+    const val = readFieldValue(fresh);
     ljfLog("  after 250ms value: \"" + val.slice(0, 40) + "\" (len=" + val.length + ")");
     if (val === text || (val && val.includes(text))) return { ok: true };
+    el = fresh;
   }
   const last = findNoteField();
   return { ok: false, error: "Note was overwritten by LinkedIn's field. Last value: \"" + readFieldValue(last).slice(0, 40) + "\"." };
