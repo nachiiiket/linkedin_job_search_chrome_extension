@@ -265,6 +265,8 @@ function notify(title, msg) {
 /***** RIGHT-CLICK MANUAL EMAIL COMPOSE *****/
 
 const CONTEXT_MENU_ID = "compose-selected-email";
+const NOTE_MENU_ID = "paste-connection-note";
+const DM_MENU_ID = "paste-linkedin-dm";
 
 function manualJobId(email, url) {
   let hash = 0;
@@ -302,6 +304,18 @@ async function createContextMenus() {
     id: CONTEXT_MENU_ID,
     title: "Compose and send",
     contexts: ["selection", "link"],
+    documentUrlPatterns: ["https://*.linkedin.com/*", "http://*.linkedin.com/*"]
+  }, () => { if (chrome.runtime.lastError) console.error("context menu:", chrome.runtime.lastError.message); });
+  chrome.contextMenus.create({
+    id: NOTE_MENU_ID,
+    title: "Paste connection note",
+    contexts: ["editable"],
+    documentUrlPatterns: ["https://*.linkedin.com/*", "http://*.linkedin.com/*"]
+  }, () => { if (chrome.runtime.lastError) console.error("context menu:", chrome.runtime.lastError.message); });
+  chrome.contextMenus.create({
+    id: DM_MENU_ID,
+    title: "Paste LinkedIn DM",
+    contexts: ["editable"],
     documentUrlPatterns: ["https://*.linkedin.com/*", "http://*.linkedin.com/*"]
   }, () => { if (chrome.runtime.lastError) console.error("context menu:", chrome.runtime.lastError.message); });
 }
@@ -373,15 +387,50 @@ async function composeManualEmail(email, tab) {
 }
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-  if (info.menuItemId !== CONTEXT_MENU_ID) return;
-  const email = await extractEmailFromContext(info);
-  if (!email) return;
-  if (email === "NO_EMAIL_IN_SELECTION") {
-    notify("No Email Found", "The selected text does not contain an email address.");
+  if (info.menuItemId === CONTEXT_MENU_ID) {
+    const email = await extractEmailFromContext(info);
+    if (!email) return;
+    if (email === "NO_EMAIL_IN_SELECTION") {
+      notify("No Email Found", "The selected text does not contain an email address.");
+      return;
+    }
+    composeManualEmail(email, tab).catch(e => console.error("manual compose:", e));
     return;
   }
-  composeManualEmail(email, tab).catch(e => console.error("manual compose:", e));
+  if (info.menuItemId === NOTE_MENU_ID) {
+    await pasteTemplateToTab(tab, "pasteConnectionNote", "connectionNote", "Connection Note");
+    return;
+  }
+  if (info.menuItemId === DM_MENU_ID) {
+    await pasteTemplateToTab(tab, "pasteLinkedInDm", "linkedinDm", "LinkedIn DM");
+    return;
+  }
 });
+
+// Send the stored template to the active LinkedIn tab so the content script can
+// paste it into the right-clicked (focused) editable field. Enforced 200-char
+// cap for the connection note happens in both storage fields and the content script.
+async function pasteTemplateToTab(tab, action, field, label) {
+  if (!tab || !tab.id) return;
+  const sendDevLog = async (text) => {
+    try { await chrome.tabs.sendMessage(tab.id, { action: "devLog", text }); } catch (e) {}
+  };
+  await sendDevLog("BG: " + label + " menu clicked");
+  const prefs = await Storage.getPreferences();
+  let template = (prefs[field] || "").trim();
+  await sendDevLog("BG: prefs loaded. " + field + " len=" + template.length + " (stored " + (prefs[field] || "").length + ")");
+  if (!template) { notify("No " + label + " Saved", "Save a " + label + " in the dashboard first."); await sendDevLog("BG: ABORT - empty template"); return; }
+  if (action === "pasteConnectionNote") template = template.slice(0, 200);
+  try {
+    const res = await chrome.tabs.sendMessage(tab.id, { action, data: { text: template } });
+    await sendDevLog("BG: content returned " + (res && res.ok ? "OK" : "ERR: " + (res && res.error)));
+    if (res && res.ok) notify(label + " Pasted", "Template inserted successfully.");
+    else notify(label + " Paste Failed", res && res.error ? res.error : "Could not find the input field.");
+  } catch (e) {
+    await sendDevLog("BG: tabs.sendMessage threw - " + e.message);
+    notify("Paste Failed", "The LinkedIn page needs a refresh.");
+  }
+}
 
 // flush queued manual composes the moment a Gmail tab finishes loading
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
