@@ -24,9 +24,11 @@ function updateUI(state, stats) {
   const pauseBtn = document.getElementById("btnPause");
   pauseBtn.textContent = "Pause";
   pauseBtn.classList.remove("btn-primary");
-  if (state.mode === "posts") document.getElementById("searchMode").value = "posts";
-  else if (state.mode === "both") document.getElementById("searchMode").value = "both";
-  else document.getElementById("searchMode").value = "jobs";
+  if (state.status === "searching") {
+    if (state.mode === "posts") document.getElementById("searchMode").value = "posts";
+    else if (state.mode === "both") document.getElementById("searchMode").value = "both";
+    else document.getElementById("searchMode").value = "jobs";
+  }
 }
 
 function handleSearchProgress(p) {
@@ -197,6 +199,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 });
 
 chrome.runtime.onMessage.addListener((msg) => {
+  if (msg.action === "state") { if (msg.state) updateUI(msg.state, msg.stats); }
   if (msg.action === "statsUpdate") {
     document.getElementById("statTotal").textContent = msg.stats.total;
     document.getElementById("statEmail").textContent = msg.stats.withEmail;

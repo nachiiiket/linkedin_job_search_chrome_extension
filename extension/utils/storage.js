@@ -11,7 +11,9 @@ const defaultPreferences = {
     "NLP Engineer", "Computer Vision Engineer", "Prompt Engineer",
     "LLM Engineer", "MLOps Engineer", "Data Scientist", "Applied Scientist", "AI Architect"],
   locations: ["Pune", "Bangalore", "Hyderabad"],
+  locationsEnabled: true,
   targetCompanies: [], easyApplyOnly: true, postedWithinDays: 1, maxJobsPerRun: 50,
+  targetCompaniesEnabled: true,
   excludedKeywords: [],
   targetPosterTitles: ["Talent Acquisition", "Recruiter", "HR", "Hiring Manager",
     "Technical Recruiter", "People Operations", "Talent Partner",
@@ -166,6 +168,7 @@ const Storage = {
 
   async clearJobs() {
     await chrome.storage.local.set({ jobs: [] });
-    await this.setState({ status: "idle", mode: "jobs", totalFound: 0 });
+    const s = await this.getState();
+    await this.setState({ status: "idle", mode: s.mode || "jobs", totalFound: 0 });
   }
 };

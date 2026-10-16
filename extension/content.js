@@ -713,9 +713,11 @@ function panelSetState(state, stats) {
   _pRefs.email.textContent = (stats || {}).withEmail || 0;
   _pRefs.sent.textContent = (stats || {}).composed || 0;
   panelSetSearchUI(searching);
-  if (state.mode === "posts") _pRefs.mode.value = "posts";
-  else if (state.mode === "both") _pRefs.mode.value = "both";
-  else _pRefs.mode.value = "jobs";
+  if (searching) {
+    if (state.mode === "posts") _pRefs.mode.value = "posts";
+    else if (state.mode === "both") _pRefs.mode.value = "both";
+    else _pRefs.mode.value = "jobs";
+  }
 }
 
 function panelSetProgress(p) {
@@ -1307,16 +1309,21 @@ function buildPhaseQueries(cfg, phase) {
       ? ["", "past-24h", "past-week", "past-month"]
       : [cfg.postDateFilter || ""];
     const filterLabels = { "": "Any time", "past-24h": "Past 24h", "past-week": "Past week", "past-month": "Past month" };
+    const locs = cfg.locationsEnabled !== false ? (cfg.locations || []) : [];
+    const locPart = locs.length ? ' AND "' + locs.join('" AND "') + '"' : "";
+    const locLabel = locs.length ? " @ " + locs.join(", ") : "";
+    const useCompanies = cfg.targetCompaniesEnabled !== false && companies.length > 0;
     for (const role of cfg.jobRoles || []) {
-      if (companies.length) {
+      const roleBase = '"Hiring" AND "' + role + '"' + locPart;
+      if (useCompanies) {
         for (const company of companies) {
           for (const fv of filterValues) {
-            qs.push({ keyword: role, location: "", label: "Posts: " + role + " @ " + company + " [" + (filterLabels[fv] || "Any time") + "]", query: '"Hiring" AND "' + role + '" AND "' + company + '"', _posts: true, dateFilter: fv });
+            qs.push({ keyword: role, location: locs.join(", "), label: "Posts: " + role + locLabel + " @ " + company + " [" + (filterLabels[fv] || "Any time") + "]", query: roleBase + ' AND "' + company + '"', _posts: true, dateFilter: fv });
           }
         }
       } else {
         for (const fv of filterValues) {
-          qs.push({ keyword: role, location: "", label: "Posts: " + role + " [" + (filterLabels[fv] || "Any time") + "]", query: '"Hiring" AND "' + role + '"', _posts: true, dateFilter: fv });
+          qs.push({ keyword: role, location: locs.join(", "), label: "Posts: " + role + locLabel + " [" + (filterLabels[fv] || "Any time") + "]", query: roleBase, _posts: true, dateFilter: fv });
         }
       }
     }
@@ -1439,13 +1446,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // Route extension-wide broadcasts into the in-page panel (same messages the
   // popup/dashboard listen to). Local search logs/progress come via send().
   try {
-    if (msg && msg.action && ["composeLog", "statsUpdate", "searchControl", "searchingComplete", "log", "progress"].includes(msg.action)) {
+    if (msg && msg.action && ["composeLog", "statsUpdate", "searchControl", "searchingComplete", "log", "progress", "state"].includes(msg.action)) {
       if (msg.action === "composeLog") panelComposeLog(msg);
       else if (msg.action === "statsUpdate") { if (_pRefs.total) { _pRefs.total.textContent = msg.stats.total; _pRefs.email.textContent = msg.stats.withEmail; _pRefs.sent.textContent = msg.stats.composed; } }
       else if (msg.action === "searchControl") panelHandleControl(msg);
       else if (msg.action === "searchingComplete") { panelSetSearchUI(false); panelSetProgress({ completed: 0, total: 0 }); }
       else if (msg.action === "log") panelSearchLog(msg.text || "", "info");
       else if (msg.action === "progress") panelSetProgress(msg);
+      else if (msg.action === "state") panelSetState(msg.state, msg.stats);
     }
   } catch (e) {}
   if (msg.action === "startSearching") {
@@ -1457,7 +1465,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     );
     return true;
   }
-  if (msg.action === "stopSearching") { sendResponse({ ok: true }); shouldStop = true; Storage.setState({ stopRequested: true }); }
+  if (msg.action === "stopSearching") {
+    sendResponse({ ok: true });
+    shouldStop = true;
+    // Preserve mode/stats: setState replaces, so merge with current state to
+    // avoid wiping status/mode while the run winds down.
+    Storage.getState().then(s => Storage.setState({ ...(s || {}), status: "idle", stopRequested: true }));
+  }
   if (msg.action === "skipQuery") { sendResponse({ ok: true }); triggerSkip(); }
   if (msg.action === "pauseSearching") { sendResponse({ ok: true }); chrome.storage.local.set({ searchPaused: true }); }
   if (msg.action === "resumeSearching") { sendResponse({ ok: true }); chrome.storage.local.set({ searchPaused: false }); }
