@@ -235,14 +235,14 @@ async function searchJobs(cfg) {
       stampQuery(det, "jobs");
       if (cfg.excludeCompanies && cfg.excludeCompanies.length) {
         if (cfg.excludeCompanies.some(e => (det.company || "").toLowerCase().includes(e.toLowerCase()))) {
-          qcount("excludedCompany"); await bumpDay({ excluded: 1 }); continue;
+          qcount("excludedCompany"); continue;
         }
       }
       if (cfg.onlyWithEmail && !det.email) {
-        qcount("excludedNoEmail"); await bumpDay({ excluded: 1 }); continue;
+        qcount("excludedNoEmail"); continue;
       }
       if (det.email && isDomainExcluded(det.email, cfg.excludedEmailDomains)) {
-        qcount("excludedDomain"); await bumpDay({ excluded: 1 }); continue;
+        qcount("excludedDomain"); await bumpDay({ excludedDomain: 1 }); continue;
       }
       const saved = await Storage.saveJob(det);
       if (saved) {
@@ -1318,12 +1318,12 @@ async function searchPosts(cfg) {
         parsed.source = "posts";
         stampQuery(parsed, "posts");
         if (cfg.onlyWithEmail && !parsed.email) {
-          qcount("excludedNoEmail"); await bumpDay({ excluded: 1 });
+          qcount("excludedNoEmail");
           send("log", { text: "Skipped (no email): " + (poster.poster_name || "unknown") });
+        } else if (parsed.email && isDomainExcluded(parsed.email, cfg.excludedEmailDomains)) {
+          qcount("excludedDomain"); await bumpDay({ excludedDomain: 1 });
+          send("log", { text: "Skipped (excluded domain): " + parsed.email });
         } else {
-          if (parsed.email && isDomainExcluded(parsed.email, cfg.excludedEmailDomains)) {
-            qcount("excludedDomain"); await bumpDay({ excluded: 1 });
-          }
           const saved = await Storage.saveJob(parsed);
           if (saved) {
             found++; newOnPage++; qcount("found");
@@ -1334,7 +1334,7 @@ async function searchPosts(cfg) {
         }
       } else {
         if (cfg.onlyWithEmail) {
-          qcount("excludedNoEmail"); await bumpDay({ excluded: 1 });
+          qcount("excludedNoEmail");
           send("log", { text: "Skipped (no email): " + (poster.poster_name || "unknown") });
         } else {
           const basic = {

@@ -242,11 +242,12 @@ const Analytics = (() => {
       if (emailDomainExcluded(j.email)) add(day, { excluded: 1 });
       else add(day, { found: 1, withEmail: 1 });
     });
-    // search-time exclusions (non-email reasons: no-email / company / dupe) and the
-    // run/search counters are only recorded live, so they come from dailyStats.
+    // search-time exclusions (domain only) and the run/search counters are only
+    // recorded live, so they come from dailyStats. `excludedDomain` counts emails
+    // that were dropped because their domain is on the user's excluded list.
     Object.keys(dailyCache).forEach(day => {
       const dc = dailyCache[day] || {};
-      add(day, { excluded: dc.excluded || 0, runs: dc.runs || 0, searches: dc.searches || 0 });
+      add(day, { excluded: dc.excludedDomain || 0, runs: dc.runs || 0, searches: dc.searches || 0 });
     });
     const days = Array.from(dayMap.keys()).filter(inRangeDay).sort();
     if (!days.length) return { labels: [], found: [], excluded: [], runs: [], searches: [], keys: [], mode: range };
@@ -296,7 +297,7 @@ const Analytics = (() => {
       if (emailDomainExcluded(j.email)) add(day, { excluded: 1 });
       else add(day, { found: 1, withEmail: 1 });
     });
-    Object.keys(dailyCache).forEach(day => add(day, { excluded: (dailyCache[day] || {}).excluded || 0 }));
+    Object.keys(dailyCache).forEach(day => add(day, { excluded: (dailyCache[day] || {}).excludedDomain || 0 }));
 
     const out = { day: null, week: null, month: null, year: null };
     ["day", "week", "month", "year"].forEach(mode => {
@@ -801,8 +802,11 @@ const Analytics = (() => {
       tr.appendChild(runsTd);
       tr.appendChild(el("td", null, String(e.found || 0)));
       tr.appendChild(el("td", null, String(e.withEmail || 0)));
-      const excl = (e.excludedNoEmail || 0) + (e.excludedCompany || 0) + (e.excludedDupe || 0) + (e.excludedDomain || 0);
-      tr.appendChild(el("td", null, String(excl)));
+      // "Excluded" = emails dropped because their domain is on the user's
+      // excluded-domain list (not no-email / company / duplicate skips).
+      const exclTd = el("td", null, String(e.excludedDomain || 0));
+      exclTd.title = "Emails dropped because their domain is on your excluded list";
+      tr.appendChild(exclTd);
       const runs = e.runs || 0;
       tr.appendChild(el("td", null, runs ? (Math.round(((e.found || 0) / runs) * 100) / 100) : "0"));
       const flag = queryFlag(e);
