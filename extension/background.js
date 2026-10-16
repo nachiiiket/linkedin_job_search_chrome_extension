@@ -454,7 +454,7 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
   }
   if (msg.action === "searchingComplete") {
     notify("Searching Complete", "All searches finished.");
-    Storage.setState({ status: "idle", mode: "jobs", totalFound: 0 });
+    Storage.getState().then(st => Storage.setState({ status: "idle", mode: st.mode || "jobs", totalFound: 0 }));
     chrome.runtime.sendMessage({ action: "searchingComplete" }).catch(() => {});
     updateBadge();
     handleAutoSendFlush();
@@ -488,6 +488,7 @@ async function startSearching(config) {
   if (!ready) { notify("Reload LinkedIn", "Please refresh the LinkedIn page for the extension to load."); return; }
 
   await Storage.setState({ status: "searching", mode: config.searchMode || "jobs", totalFound: 0 });
+  broadcastState();
   const modeLabel = config.searchMode === "posts" ? "posts" : "jobs";
   notify("Searching Started", "Searching " + (config.jobRoles || []).length + " roles in " + modeLabel);
 
@@ -495,10 +496,25 @@ async function startSearching(config) {
 }
 
 async function stopSearching() {
-  if (activeTabId) { chrome.tabs.sendMessage(activeTabId, { action: "stopSearching" }).catch(() => {}); }
+  // Deliver stop to every LinkedIn content script: activeTabId can be stale or
+  // lost when the service worker restarts, so we never rely on it alone.
+  const byUrl = await chrome.tabs.query({ url: "https://*.linkedin.com/*" });
+  const all = await chrome.tabs.query({});
+  const targets = (byUrl.length ? byUrl : all).filter(t => t.id != null && t.url && t.url.includes("linkedin.com"));
+  for (const t of targets) { chrome.tabs.sendMessage(t.id, { action: "stopSearching" }).catch(() => {}); }
   await chrome.storage.local.set({ searchPaused: false });
-  await Storage.setState({ status: "idle", mode: "jobs", totalFound: 0, stopRequested: false });
+  const st = await Storage.getState();
+  // Persist stopRequested so an in-flight content script's checkStop() halts
+  // even if the tab message is missed; the script clears it when it winds down.
+  await Storage.setState({ status: "idle", mode: st.mode || "jobs", totalFound: 0, stopRequested: true });
+  broadcastState();
   notify("Searching Stopped", "The search was stopped.");
+}
+
+function broadcastState() {
+  Promise.all([Storage.getState(), Storage.getStats()]).then(([s, st]) => {
+    chrome.runtime.sendMessage({ action: "state", state: s, stats: st }).catch(() => {});
+  });
 }
 
 function broadcastSearchControl(type) {
