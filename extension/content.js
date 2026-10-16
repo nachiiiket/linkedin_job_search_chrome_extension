@@ -1269,12 +1269,17 @@ async function searchPosts(cfg) {
           notes: "", full_post: pageText.slice(0, 2000), source: "posts"
         };
         stampQuery(basic, "posts");
-        const saved = await Storage.saveJob(basic);
-        if (saved) {
-          found++; qcount("found");
-          if (basic.email) { qcount("withEmail"); await bumpDay({ found: 1, withEmail: 1 }); }
-          else await bumpDay({ found: 1 });
-          send("jobFound", { job: basic });
+        if (basic.email && isDomainExcluded(basic.email, cfg.excludedEmailDomains)) {
+          qcount("excludedDomain"); await bumpDay({ excludedDomain: 1 });
+          send("log", { text: "Skipped (excluded domain): " + basic.email });
+        } else {
+          const saved = await Storage.saveJob(basic);
+          if (saved) {
+            found++; qcount("found");
+            if (basic.email) { qcount("withEmail"); await bumpDay({ found: 1, withEmail: 1 }); }
+            else await bumpDay({ found: 1 });
+            send("jobFound", { job: basic });
+          }
         }
       }
       break;

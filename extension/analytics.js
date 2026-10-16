@@ -356,7 +356,7 @@ const Analytics = (() => {
       if (!label) return;
       const e = byLabel.get(label) || { found: 0, withEmail: 0, phase: j.phase || "" };
       e.found++;
-      if (j.email) e.withEmail++;
+      if (jobHasKeptEmail(j)) e.withEmail++;
       if (!e.phase && j.phase) e.phase = j.phase;
       byLabel.set(label, e);
     });
