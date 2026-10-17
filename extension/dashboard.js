@@ -3,7 +3,7 @@ function connect() {
   if (port) { try { port.disconnect(); } catch (e) {} }
   const p = chrome.runtime.connect({ name: "dashboard" });
   port = p;
-  p.onDisconnect.addListener(() => { if (port === p) port = null; });
+  p.onDisconnect.addListener(() => { if (port === p) { port = null; setTimeout(() => { if (!port) { connect(); send({ action: "getPreferences" }); send({ action: "getState" }); send({ action: "getJobs" }); } }, 1000); } });
   p.onMessage.addListener(handle);
 }
 function send(msg) {
@@ -96,8 +96,23 @@ function populateForm(p) {
 
 function getPrefs(section) {
   section = section || "jobs";
-  const jobs = section === "jobs" || section === "all";
-  const p = {
+  const base = _prefsMirror ? JSON.parse(JSON.stringify(_prefsMirror)) : {};
+  const emailFields = {
+    emailSubject: document.getElementById("emailSubject").value,
+    emailBody: document.getElementById("emailBody").value,
+    connectionNote: (document.getElementById("connectionNote").value || "").slice(0, 200),
+    linkedinDm: document.getElementById("linkedinDm").value || "",
+    composeSpeed: parseInt(document.getElementById("composeSpeed").value) || 0,
+    excludedEmailDomains: document.getElementById("excludedEmailDomains").value.split(",").map(s => s.trim()).filter(Boolean),
+    autoSendEnabled: document.getElementById("autoSendEnabled").checked,
+    autoSendMode: document.getElementById("autoSendMode").value,
+    batchSize: parseInt(document.getElementById("batchSize").value) || 10,
+    sendMinDelay: parseInt(document.getElementById("sendMinDelay").value) || 1000,
+    sendMaxDelay: parseInt(document.getElementById("sendMaxDelay").value) || 3000,
+  };
+  if (section === "email") return Object.assign(base, emailFields);
+  const jobs = section === "jobs";
+  return Object.assign(base, {
     jobRoles: document.getElementById(jobs ? "jobsRoles" : "postsRoles").value.split("\n").map(s => s.trim()).filter(Boolean),
     locations: document.getElementById(jobs ? "jobsLocations" : "postsLocations").value.split("\n").map(s => s.trim()).filter(Boolean),
     locationsEnabled: document.getElementById("postsLocationsEnabled").checked,
@@ -110,23 +125,11 @@ function getPrefs(section) {
     maxJobsPerRun: parseInt(document.getElementById("jobsMaxPerRun").value) || 50,
     searchSpeed: document.getElementById(jobs ? "jobsSpeed" : "postsSpeed").value,
     postDateFilter: document.getElementById("postsDateFilter").value,
-    targetPosterTitles: [], excludedKeywords: [],
     searchMode: jobs ? "jobs" : "posts",
-    emailSubject: document.getElementById("emailSubject").value,
-    emailBody: document.getElementById("emailBody").value,
-    connectionNote: (document.getElementById("connectionNote").value || "").slice(0, 200),
-    linkedinDm: document.getElementById("linkedinDm").value || "",
-    composeSpeed: parseInt(document.getElementById("composeSpeed").value) || 0,
-    excludedEmailDomains: document.getElementById("excludedEmailDomains").value.split(",").map(s => s.trim()).filter(Boolean),
-    autoSendEnabled: document.getElementById("autoSendEnabled").checked,
-    autoSendMode: document.getElementById("autoSendMode").value,
-    batchSize: parseInt(document.getElementById("batchSize").value) || 10,
-    sendMinDelay: parseInt(document.getElementById("sendMinDelay").value) || 1000,
-    sendMaxDelay: parseInt(document.getElementById("sendMaxDelay").value) || 3000,
-    showInPagePanel: _prefsMirror ? _prefsMirror.showInPagePanel === true : false,
-    showDebugLogs: _prefsMirror ? _prefsMirror.showDebugLogs === true : false,
-  };
-  return p;
+    showInPagePanel: base.showInPagePanel === true,
+    showDebugLogs: base.showDebugLogs === true,
+    ...emailFields,
+  });
 }
 
 function renderJobs(jobs) {
@@ -258,11 +261,11 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
   document.getElementById("btnSaveEmailPrefs").addEventListener("click", () => {
     document.getElementById("emailSaveStatus").textContent = "Saving...";
-    send({ action: "savePreferences", prefs: getPrefs("all") });
+    send({ action: "savePreferences", prefs: getPrefs("email") });
   });
   document.getElementById("btnSaveDmTemplates").addEventListener("click", () => {
     document.getElementById("dmSaveStatus").textContent = "Saving...";
-    send({ action: "savePreferences", prefs: getPrefs("all") });
+    send({ action: "savePreferences", prefs: getPrefs("email") });
   });
   const noteInput = document.getElementById("connectionNote");
   noteInput.addEventListener("input", () => {
@@ -296,7 +299,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("sbtabEmail").addEventListener("click", () => switchSidebarPane("Email"));
 
   document.getElementById("btnComposeInGmail").addEventListener("click", async () => {
-    send({ action: "savePreferences", prefs: getPrefs("all") });
+    send({ action: "savePreferences", prefs: getPrefs("email") });
     document.getElementById("btnComposeInGmail").style.display = "none";
     document.getElementById("btnAbortCompose").style.display = "inline-block";
     document.getElementById("composeLog").innerHTML = '';
@@ -412,7 +415,7 @@ chrome.runtime.onMessage.addListener((msg) => {
     if (msg.state) { updateState(msg.state, msg.stats); if (msg.state.status === "idle") handleSearchProgress({ completed: 0, total: 0 }); }
   }
   if (msg.action === "progress") handleSearchProgress(msg);
-  if (msg.action === "searchingComplete") { handleSearchProgress({ completed: 0, total: 0 }); Analytics.setJobs(); }
+  if (msg.action === "searchingComplete") { handleSearchProgress({ completed: 0, total: 0 }); Analytics.setJobs(); send({ action: "getState" }); send({ action: "getJobs" }); }
   if (msg.action === "manualEmailsUpdated") {
     Storage.getManualEmails().then(m => { manualEmails = m; renderManualEmails(); });
   }

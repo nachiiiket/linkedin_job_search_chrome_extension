@@ -6,6 +6,7 @@ let _isComposing = false;
 let _pendingBatch = [];
 
 let activeTabId = null;
+let activeSearchTabId = null;
 
 function rand(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
 
@@ -22,8 +23,9 @@ async function getOrWaitGmailTab() {
   return null;
 }
 
-async function sendSingleJob(job, prefs, tabId, forceSend) {
-  const to = job.email.split('\n')[0].trim();
+async function sendSingleJob(job, prefs, tabId, forceSend, to) {
+  to = to || firstDeliverableEmail(job.email, prefs.excludedEmailDomains || []);
+  if (!to) return false;
   const subject = prefs.emailSubject || '';
   const body = prefs.emailBody || '';
   const speed = prefs.composeSpeed != null ? Number(prefs.composeSpeed) : 1000;
@@ -47,9 +49,7 @@ async function sendSingleJob(job, prefs, tabId, forceSend) {
 }
 
 function isDomainExcluded(job, excluded) {
-  if (!excluded || !excluded.length) return false;
-  const domain = ((job.email || '').toLowerCase().split('@')[1] || '');
-  return excluded.some(d => domain.includes(d));
+  return emailMatchesExcluded((job && job.email) || "", excluded || []);
 }
 
 async function processQueue() {
@@ -63,12 +63,13 @@ async function processQueue() {
   while (_composeQueue.length > 0) {
     if (composeAbort) { _composeQueue = []; break; }
     const job = _composeQueue.shift();
-    if (isDomainExcluded(job, excluded)) continue;
-    const to = (job.email || '').split('\n')[0].trim().toLowerCase();
-    if (sentEmails.includes(to)) continue;
-    const ok = await sendSingleJob(job, prefs, tabId, job._manual === true);
+    const to = firstDeliverableEmail(job.email, excluded);
+    if (!to) continue;
+    const toKey = to.toLowerCase();
+    if (sentEmails.includes(toKey)) continue;
+    const ok = await sendSingleJob(job, prefs, tabId, job._manual === true, to);
     if (ok) {
-      sentEmails.push(to);
+      sentEmails.push(toKey);
       if (job._manual) {
         await Storage.markManualEmailSent(job.job_id, new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }));
         chrome.runtime.sendMessage({ action: "manualEmailsUpdated" }).catch(() => {});
@@ -90,11 +91,12 @@ async function processBatch() {
   if (!tabId) return;
   for (const job of jobs) {
     if (composeAbort) break;
-    if (isDomainExcluded(job, excluded)) continue;
-    const to = (job.email || '').split('\n')[0].trim().toLowerCase();
-    if (sentEmails.includes(to)) continue;
-    const ok = await sendSingleJob(job, prefs, tabId, job._manual === true);
-    if (ok) sentEmails.push(to);
+    const to = firstDeliverableEmail(job.email, excluded);
+    if (!to) continue;
+    const toKey = to.toLowerCase();
+    if (sentEmails.includes(toKey)) continue;
+    const ok = await sendSingleJob(job, prefs, tabId, job._manual === true, to);
+    if (ok) sentEmails.push(toKey);
     if (!ok) break;
   }
 }
@@ -154,12 +156,13 @@ async function composeInGmail(jobs, port) {
   const sentEmails = await Storage.getSentEmails();
   const filtered = [];
   for (const j of emailJobs) {
-    if (isDomainExcluded(j, excluded)) {
+    const deliverable = firstDeliverableEmail(j.email, excluded);
+    if (!deliverable) {
       const m = `Skipped ${j.email} (excluded domain)`;
       safePost(port, { action: 'composeProgress', type: 'skip', message: m });
       broadcastComposeLog({ type: 'skip', message: m });
     } else {
-      const to = (j.email || '').split('\n')[0].trim().toLowerCase();
+      const to = deliverable.toLowerCase();
       if (sentEmails.includes(to)) {
         const m = `Skipped ${to} (already sent)`;
         safePost(port, { action: 'composeProgress', type: 'skip', message: m });
@@ -221,7 +224,7 @@ async function composeInGmail(jobs, port) {
       return;
     }
 
-    const to = job.email.split('\n')[0].trim();
+    const to = firstDeliverableEmail(job.email, prefs.excludedEmailDomains || []);
     const subject = prefs.emailSubject || '';
     const body = prefs.emailBody || '';
 
@@ -259,7 +262,7 @@ async function composeInGmail(jobs, port) {
 }
 
 function notify(title, msg) {
-  chrome.notifications.create({ type: "basic", iconUrl: "icons/icon_new.png", title, message: msg });
+  chrome.notifications.create({ type: "basic", iconUrl: "icons/icon_new.png", title, message: msg }).catch(() => {});
 }
 
 /***** RIGHT-CLICK MANUAL EMAIL COMPOSE *****/
@@ -446,15 +449,28 @@ async function updateBadge() {
   chrome.runtime.sendMessage({ action: "statsUpdate", stats }).catch(() => {});
 }
 
-chrome.runtime.onMessage.addListener((msg, sender) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.action === "getTabId") {
+    sendResponse({ tabId: sender.tab ? sender.tab.id : null });
+    return false;
+  }
+  if (msg.action === "claimResume") {
+    const tid = sender.tab ? sender.tab.id : null;
+    sendResponse({ ok: tid != null && (activeSearchTabId == null || activeSearchTabId === tid) });
+    return false;
+  }
   if (msg.action === "jobFound") {
     updateBadge();
-    handleAutoSendJob(msg.job);
+    handleAutoSendJob(msg.job).catch(() => {});
     return false;
   }
   if (msg.action === "searchingComplete") {
     notify("Searching Complete", "All searches finished.");
-    Storage.getState().then(st => Storage.setState({ status: "idle", mode: st.mode || "jobs", totalFound: 0 }));
+    Storage.getState()
+      .then(st => Storage.setState({ status: "idle", mode: st.mode || "jobs", totalFound: 0 }))
+      .then(() => { activeSearchTabId = null; return chrome.storage.local.remove("activeSearchTabId"); })
+      .then(() => broadcastState())
+      .catch(() => {});
     chrome.runtime.sendMessage({ action: "searchingComplete" }).catch(() => {});
     updateBadge();
     handleAutoSendFlush();
@@ -480,6 +496,11 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
 chrome.action.onClicked.addListener(() => { chrome.runtime.openOptionsPage(); });
 
 async function startSearching(config) {
+  const st = await Storage.getState();
+  if (st.status === "searching") {
+    notify("Search Already Running", "A search is already in progress. Stop it before starting a new one.");
+    return;
+  }
   const tab = await getLinkedInTab();
   if (!tab) { notify("LinkedIn Required", "Open a LinkedIn tab first."); return; }
   activeTabId = tab.id;
@@ -487,6 +508,8 @@ async function startSearching(config) {
   const ready = await isContentScriptReady(tab.id);
   if (!ready) { notify("Reload LinkedIn", "Please refresh the LinkedIn page for the extension to load."); return; }
 
+  activeSearchTabId = tab.id;
+  await chrome.storage.local.set({ activeSearchTabId: tab.id });
   await Storage.setState({ status: "searching", mode: config.searchMode || "jobs", totalFound: 0 });
   broadcastState();
   const modeLabel = config.searchMode === "posts" ? "posts" : "jobs";
@@ -507,6 +530,8 @@ async function stopSearching() {
   // Persist stopRequested so an in-flight content script's checkStop() halts
   // even if the tab message is missed; the script clears it when it winds down.
   await Storage.setState({ status: "idle", mode: st.mode || "jobs", totalFound: 0, stopRequested: true });
+  activeSearchTabId = null;
+  await chrome.storage.local.remove("activeSearchTabId");
   broadcastState();
   notify("Searching Stopped", "The search was stopped.");
 }

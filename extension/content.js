@@ -1,4 +1,5 @@
 let shouldStop = false;
+let _running = false;
 let _speedFactor = 1;
 const _progress = { completed: 0, total: 0 };
 let _skipCurrent = false;
@@ -43,9 +44,7 @@ function stampQuery(d, phase) {
 }
 
 function isDomainExcluded(email, domains) {
-  if (!email || !domains || !domains.length) return false;
-  const e = String(email).toLowerCase();
-  return domains.some(d => { const s = String(d || "").toLowerCase().trim(); return s && e.includes(s); });
+  return emailMatchesExcluded(email, domains);
 }
 
 function broadcastProgress() {
@@ -247,8 +246,7 @@ async function searchJobs(cfg) {
       const saved = await Storage.saveJob(det);
       if (saved) {
         found++; qcount("found");
-        if (det.email) { qcount("withEmail"); await bumpDay({ found: 1, withEmail: 1 }); }
-        else await bumpDay({ found: 1 });
+        if (det.email) qcount("withEmail");
         send("jobFound", { job: det });
         send("log", { text: "[" + found + "] " + det.position + " @ " + det.company + (det.email ? " - " + det.email : "") });
       } else { qcount("excludedDupe"); }
@@ -876,7 +874,7 @@ function panelWireControls() {
 
 function panelPost(msg) {
   if (_pPort) { try { _pPort.postMessage(msg); return; } catch (e) {} }
-  try { chrome.runtime.sendMessage(msg); } catch (e) {}
+  try { chrome.runtime.sendMessage(msg).catch(() => {}); } catch (e) {}
 }
 
 function panelConnect() {
@@ -1265,7 +1263,7 @@ async function searchPosts(cfg) {
           date_found: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }),
           position: "", company: "", location: cfg.locations?.[0] || "",
           poster_name: "", poster_title: "", poster_profile_url: "", job_url: window.location.href.split("?")[0],
-          email: (allEmails.emails || []).join(", "), applied: "No", connection_sent: "No", composed: "No",
+          email: (allEmails.emails || []).join("\n"), applied: "No", connection_sent: "No", composed: "No",
           notes: "", full_post: pageText.slice(0, 2000), source: "posts"
         };
         stampQuery(basic, "posts");
@@ -1276,8 +1274,7 @@ async function searchPosts(cfg) {
           const saved = await Storage.saveJob(basic);
           if (saved) {
             found++; qcount("found");
-            if (basic.email) { qcount("withEmail"); await bumpDay({ found: 1, withEmail: 1 }); }
-            else await bumpDay({ found: 1 });
+            if (basic.email) qcount("withEmail");
             send("jobFound", { job: basic });
           }
         }
@@ -1332,8 +1329,7 @@ async function searchPosts(cfg) {
           const saved = await Storage.saveJob(parsed);
           if (saved) {
             found++; newOnPage++; qcount("found");
-            if (parsed.email) { qcount("withEmail"); await bumpDay({ found: 1, withEmail: 1 }); }
-            else await bumpDay({ found: 1 });
+            if (parsed.email) qcount("withEmail");
             send("jobFound", { job: parsed });
           } else qcount("excludedDupe");
         }
@@ -1353,7 +1349,7 @@ async function searchPosts(cfg) {
           stampQuery(basic, "posts");
           const saved = await Storage.saveJob(basic);
           if (saved) {
-            found++; newOnPage++; qcount("found"); await bumpDay({ found: 1 });
+            found++; newOnPage++; qcount("found");
             send("jobFound", { job: basic });
             send("log", { text: "Saved (no email): " + (poster.poster_name || "unknown poster") });
           } else qcount("excludedDupe");
@@ -1515,53 +1511,59 @@ async function runPhase(cfg, phase, startIdx) {
 // fix: clear stopRequested + reset shouldStop at top so stale stop state from previous run
 // doesn't immediately abort a fresh start
 async function runAll(cfg) {
-  shouldStop = false;
-  _skipCurrent = false;
-  _abortQuery = false;
-  _qctx = null;
-  _qdelta = null;
-  try { _disabledQueries = await Storage.getDisabledQueries(); } catch (e) { _disabledQueries = []; }
-  await chrome.storage.local.set({ searchPaused: false });
-  const speed = cfg.searchSpeed || "normal";
-  if (speed === "fast") _speedFactor = 0.35;
-  else if (speed === "max") _speedFactor = 0;
-  else _speedFactor = 1;
-  const mode = cfg.searchMode || "jobs";
-  await Storage.setState({ status: "searching", mode, totalFound: 0, stopRequested: false });
+  if (_running) { send("log", { text: "Search already running — start ignored." }); return; }
+  _running = true;
+  try {
+    shouldStop = false;
+    _skipCurrent = false;
+    _abortQuery = false;
+    _qctx = null;
+    _qdelta = null;
+    try { _disabledQueries = await Storage.getDisabledQueries(); } catch (e) { _disabledQueries = []; }
+    await chrome.storage.local.set({ searchPaused: false });
+    const speed = cfg.searchSpeed || "normal";
+    if (speed === "fast") _speedFactor = 0.35;
+    else if (speed === "max") _speedFactor = 0;
+    else _speedFactor = 1;
+    const mode = cfg.searchMode || "jobs";
+    await Storage.setState({ status: "searching", mode, totalFound: 0, stopRequested: false });
 
-  if (await checkStop()) { await chrome.storage.local.remove("activeSearchConfig"); return; }
+    if (await checkStop()) { await chrome.storage.local.remove("activeSearchConfig"); return; }
 
-  const phases = mode === "both" ? ["jobs", "posts"] : [mode === "posts" ? "posts" : "jobs"];
+    const phases = mode === "both" ? ["jobs", "posts"] : [mode === "posts" ? "posts" : "jobs"];
 
-  const phaseCounts = phases.map(p => buildPhaseQueries(cfg, p).length);
-  _progress.total = phaseCounts.reduce((a, b) => a + b, 0);
-  _progress.completed = 0;
+    const phaseCounts = phases.map(p => buildPhaseQueries(cfg, p).length);
+    _progress.total = phaseCounts.reduce((a, b) => a + b, 0);
+    _progress.completed = 0;
 
-  const saved = await chrome.storage.local.get("activeSearchConfig");
-  let sc = saved.activeSearchConfig;
-  let phaseStart = sc ? phases.indexOf(sc.phase) : 0;
-  if (phaseStart < 0) phaseStart = 0;
+    const saved = await chrome.storage.local.get("activeSearchConfig");
+    let sc = saved.activeSearchConfig;
+    let phaseStart = sc ? phases.indexOf(sc.phase) : 0;
+    if (phaseStart < 0) phaseStart = 0;
 
-  if (sc && phases.includes(sc.phase)) {
-    for (let i = 0; i < phases.indexOf(sc.phase); i++) _progress.completed += phaseCounts[i];
-    _progress.completed += (sc.idx || 0);
+    if (sc && phases.includes(sc.phase)) {
+      for (let i = 0; i < phases.indexOf(sc.phase); i++) _progress.completed += phaseCounts[i];
+      _progress.completed += (sc.idx || 0);
+    }
+    broadcastProgress();
+
+    for (let p = phaseStart; p < phases.length && !(await checkStop()); p++) {
+      const phase = phases[p];
+      const idx = (sc && sc.phase === phase) ? (sc.idx || 0) : 0;
+      const done = await runPhase(cfg, phase, idx);
+      if (!done) return;
+      sc = null;
+    }
+
+    await chrome.storage.local.remove("activeSearchConfig");
+    await Storage.setState({ status: "idle", mode, totalFound: 0, stopRequested: false });
+    shouldStop = false;
+    _progress.completed = _progress.total;
+    broadcastProgress();
+    send("searchingComplete", {});
+  } finally {
+    _running = false;
   }
-  broadcastProgress();
-
-  for (let p = phaseStart; p < phases.length && !(await checkStop()); p++) {
-    const phase = phases[p];
-    const idx = (sc && sc.phase === phase) ? (sc.idx || 0) : 0;
-    const done = await runPhase(cfg, phase, idx);
-    if (!done) return;
-    sc = null;
-  }
-
-  await chrome.storage.local.remove("activeSearchConfig");
-  await Storage.setState({ status: "idle", mode, totalFound: 0, stopRequested: false });
-  shouldStop = false;
-  _progress.completed = _progress.total;
-  broadcastProgress();
-  send("searchingComplete", {});
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -1580,6 +1582,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   } catch (e) {}
   if (msg.action === "startSearching") {
     sendResponse({ ok: true });
+    if (_running) { send("log", { text: "Search already running — start ignored." }); return true; }
     shouldStop = false;
     bumpDay({ searches: 1 });
     // clear stale activeSearchConfig so fresh start never resumes an old session
@@ -1641,6 +1644,9 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (await checkStop()) { await chrome.storage.local.remove("activeSearchConfig"); await Storage.setState({ stopRequested: false, status: "idle" }); return; }
   const isOnSearch = window.location.href.includes("/jobs/search") || window.location.href.includes("/search/results/content");
   if (isOnSearch) {
+    const tid = await chrome.runtime.sendMessage({ action: "getTabId" }).catch(() => null);
+    const claim = await chrome.runtime.sendMessage({ action: "claimResume" }).catch(() => null);
+    if (!tid || !tid.tabId || !claim || !claim.ok) return;
     await rand(500, 1000);
     send("log", { text: "Resuming search session..." });
     await runAll(sc.config);

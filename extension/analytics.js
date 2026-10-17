@@ -178,7 +178,8 @@ const Analytics = (() => {
     const p = today.split("-").map(Number);
     switch (range) {
       case "day": return new Date(Date.UTC(p[0], p[1] - 1, p[2] - 29)).toISOString().slice(0, 10);
-      case "week": return new Date(Date.UTC(p[0], p[1] - 1, p[2] - 83)).toISOString().slice(0, 10);
+      // trailing 7 days: today and the 6 days before it
+      case "week": return new Date(Date.UTC(p[0], p[1] - 1, p[2] - 6)).toISOString().slice(0, 10);
       case "month": return new Date(Date.UTC(p[0], p[1] - 1 - 11, 1)).toISOString().slice(0, 10);
       case "year": return new Date(Date.UTC(p[0] - 4, 0, 1)).toISOString().slice(0, 10);
       default: return null;
@@ -252,9 +253,12 @@ const Analytics = (() => {
     const days = Array.from(dayMap.keys()).filter(inRangeDay).sort();
     if (!days.length) return { labels: [], found: [], excluded: [], runs: [], searches: [], keys: [], mode: range };
     const buckets = new Map();
-    // for "all", pick a bucket width that keeps the whole history readable
+    // for "all", pick a bucket width that keeps the whole history readable;
+    // a 7-day "week" window is read day-by-day (Monday-start week buckets would
+    // show mostly-out-of-window partial weeks at this width).
     let mode = range;
-    if (range === "all") {
+    if (range === "week") mode = "day";
+    else if (range === "all") {
       const p1 = days[0].split("-").map(Number), p2 = days[days.length - 1].split("-").map(Number);
       const span = (Date.UTC(p2[0], p2[1] - 1, p2[2]) - Date.UTC(p1[0], p1[1] - 1, p1[2])) / 86400000;
       mode = span > 730 ? "year" : span > 45 ? "month" : "day";
@@ -348,25 +352,41 @@ const Analytics = (() => {
 
   // Merged per-query rows so the table and the "top queries" chart stay in sync:
   // found/withEmail are reconciled from saved jobs (durable across runs), while
-  // runs/skipped/failed/excluded come from the per-query aggregates.
+  // runs/skipped/failed/excluded come from the per-query aggregates. Outside the
+  // "all" range the job side is scoped to the window; per-query run counters are
+  // all-time (they are not recorded per day) and are preserved as-is.
   function queryRows() {
+    const scoped = range !== "all";
+    const jobs = scoped ? jobsCache.filter(inRange) : jobsCache;
     const byLabel = new Map();
-    jobsCache.forEach(j => {
+    jobs.forEach(j => {
       const label = j.query_label || "";
       if (!label) return;
-      const e = byLabel.get(label) || { found: 0, withEmail: 0, phase: j.phase || "" };
+      const e = byLabel.get(label) || { found: 0, withEmail: 0, excluded: 0, phase: j.phase || "" };
       e.found++;
       if (jobHasKeptEmail(j)) e.withEmail++;
+      if (emailDomainExcluded(j.email)) e.excluded++;
       if (!e.phase && j.phase) e.phase = j.phase;
       byLabel.set(label, e);
     });
     const rows = queryStatsCache.map(q => {
       const d = byLabel.get(q.label);
       const row = Object.assign({}, q);
+      // Excluded = domain-excluded emails reconstructed from (scoped) jobs for
+      // this label, plus the live search-time domain exclusions for the query.
+      row.excluded = (d ? d.excluded : 0) + (q.excludedDomain || 0);
       if (d) {
-        row.found = Math.max(q.found || 0, d.found);
-        row.withEmail = Math.max(q.withEmail || 0, d.withEmail);
+        if (scoped) {
+          row.found = d.found;
+          row.withEmail = d.withEmail;
+        } else {
+          row.found = Math.max(q.found || 0, d.found);
+          row.withEmail = Math.max(q.withEmail || 0, d.withEmail);
+        }
         if (!row.phase && d.phase) row.phase = d.phase;
+      } else if (scoped) {
+        row.found = 0;
+        row.withEmail = 0;
       }
       return row;
     });
@@ -375,7 +395,7 @@ const Analytics = (() => {
       if (seen.has(label)) return;
       rows.push({
         id: "jobs|" + label, label, phase: d.phase, keyword: "", location: "",
-        runs: 0, found: d.found, withEmail: d.withEmail, excludedNoEmail: 0,
+        runs: 0, found: d.found, withEmail: d.withEmail, excluded: d.excluded, excludedNoEmail: 0,
         excludedCompany: 0, excludedDupe: 0, excludedDomain: 0, skipped: 0, failed: 0,
         completeRuns: 0, interrupted: 0, lastRunAt: ""
       });
@@ -770,10 +790,12 @@ const Analytics = (() => {
   // Dead/Low decision for auto-disabling queries. Only a FULLY COMPLETED run
   // counts as a "complete run" — interrupted attempts (user skip mid-run, resumed
   // sessions) are tracked separately and shown, but never make a query look dead.
-  // Rows written before this existed fall back to the legacy `runs` count.
+  // Rows written before `completeRuns` existed are skipped entirely: their legacy
+  // `runs` counted every attempt, so they must never be treated as complete.
   function queryFlag(e) {
+    if (e.completeRuns == null) return null;
     const found = e.found || 0;
-    const complete = (e.completeRuns != null) ? (e.completeRuns || 0) : (e.runs || 0);
+    const complete = e.completeRuns || 0;
     const interrupted = e.interrupted || 0;
     const min = deadQueryRuns || 3;
     if (complete >= min && found === 0) return { label: "Dead", cls: "flag-dead", dead: true, complete: complete, interrupted: interrupted };
@@ -804,7 +826,7 @@ const Analytics = (() => {
       tr.appendChild(el("td", null, String(e.withEmail || 0)));
       // "Excluded" = emails dropped because their domain is on the user's
       // excluded-domain list (not no-email / company / duplicate skips).
-      const exclTd = el("td", null, String(e.excludedDomain || 0));
+      const exclTd = el("td", null, String(e.excluded || e.excludedDomain || 0));
       exclTd.title = "Emails dropped because their domain is on your excluded list";
       tr.appendChild(exclTd);
       const runs = e.runs || 0;
@@ -887,19 +909,19 @@ const Analytics = (() => {
       if (!p) return;
       any = true;
       host.appendChild(el("span", "peak-chip",
-        lab + " · " + p.label + " · " + p.found + (p.found === 1 ? " email" : " emails")));
+        lab + " · " + p.label + " · " + p.found + (p.found === 1 ? " email" : " emails") + " (all-time)"));
     });
     const wk = computeWeekdayStats();
     if (wk.best) {
       any = true;
       host.appendChild(el("span", "peak-chip peak-weekday",
-        "Most emails on " + wk.best.label + " · " + wk.best.withEmail));
+        "Most emails on " + wk.best.label + " · " + wk.best.withEmail + " (range)"));
     }
     const ph = computePhaseStats();
     if (ph.best && ph.arr.length > 1) {
       any = true;
       host.appendChild(el("span", "peak-chip",
-        "Best feed · " + ph.best.phase + " · " + ph.best.withEmail + " emails"));
+        "Best feed · " + ph.best.phase + " · " + ph.best.withEmail + " emails (range)"));
     }
     if (!any) host.appendChild(el("span", "peak-chip peak-empty", "No data yet"));
   }
