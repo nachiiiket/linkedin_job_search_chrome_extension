@@ -2,3 +2,6 @@
 .DS_Store
 Thumbs.db
 node_modules/
+graphify-out/
+.opencode/
+.gitattributes
