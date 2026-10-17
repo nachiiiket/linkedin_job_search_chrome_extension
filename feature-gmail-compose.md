@@ -21,7 +21,7 @@ This branch replaces the discarded `feature/email-sending` approach (Python scri
 | `extension/utils/storage.js` | MODIFIED | Compose prefs, sentEmails, composeState |
 | `extension/utils/exporter.js` | MODIFIED | Added `composed` column to export |
 | `extension/utils/parser.js` | MODIFIED | Added `composed` field to default job object |
-| `extension/content.js` | MODIFIED | Scrape speed factor, `composed` field in job objects |
+| `extension/content.js` | MODIFIED | Search speed factor, `composed` field in job objects |
 | `extension/icons/icon_new.png` | **NEW** | New logo (1254×1254) |
 
 ---
@@ -118,7 +118,7 @@ New logo (1254×1254, ~1.1MB). Used in:
 - In batch mode: accumulates in `_pendingBatch` → `processBatch()` when count reaches `batchSize`
 
 **`handleAutoSendFlush()`**
-- Called on `scrapingComplete` to flush any remaining batch jobs
+- Called on `searchingComplete` to flush any remaining batch jobs
 
 **`processQueue()`**
 - Serialized processing via `_isComposing` lock
@@ -143,7 +143,7 @@ New logo (1254×1254, ~1.1MB). Used in:
 
 #### Other
 - Notification icon updated from `icons/icon48.png` to `icons/icon_new.png`
-- Scraping state management (`startScraping`, `stopScraping`) unchanged
+- Searching state management (`startSearching`, `stopSearching`) unchanged
 
 ---
 
@@ -156,10 +156,10 @@ fast   → _speedFactor = 0.35
 max    → _speedFactor = 0
 ```
 - `rand(lo, hi)` now multiplies base delay by `_speedFactor`
-- Set in `runAll(cfg)` from `cfg.scrapeSpeed`
+- Set in `runAll(cfg)` from `cfg.searchSpeed`
 
 #### `composed` Field
-- Added `composed: "No"` to job objects in `extractJob()`, `scrapePosts()` (both email and no-email branches)
+- Added `composed: "No"` to job objects in `extractJob()`, `searchPosts()` (both email and no-email branches)
 
 ---
 
@@ -234,15 +234,15 @@ sendMaxDelay: 3000,           // Max between-email delay (ms)
        │         ├── Excluded domains input
        │         └── Compose/Stop buttons
        └── .popup-right (flex 1, border-left)
-            ├── .popup-log-section (Scraping log — upper half)
+            ├── .popup-log-section (Searching log — upper half)
             └── .popup-log-section (Email Compose log — lower half)
 ```
 
 #### Removed Elements
-- Test email input + button (was for testing compose without scraping)
+- Test email input + button (was for testing compose without searching)
 - Resume file picker + upload button
 - Dummy email row
-- Separate scrape/compose log toggles
+- Separate search/compose log toggles
 
 #### Added Elements
 - New logo (`icon_new.png`, CSS 28×28)
@@ -260,8 +260,8 @@ sendMaxDelay: 3000,           // Max between-email delay (ms)
 | Function | Purpose |
 |----------|---------|
 | `connect()` | Open port to background, handle messages |
-| `updateUI(state, stats)` | Sync scrape state from storage |
-| `setStatus(s)` | Toggle idle/scraping button state |
+| `updateUI(state, stats)` | Sync search state from storage |
+| `setStatus(s)` | Toggle idle/searching button state |
 | `setComposeUI(active)` | Toggle Compose/Stop button visibility |
 | `addLogEntry(containerId, msg)` | Append colored entry to specified log container |
 | `handleComposeProgress(msg)` | Route compose progress to composeLog; manage buttons |
@@ -452,10 +452,10 @@ Before each compose operation:
 └─────────────────────────────────────────────────────┘
 ```
 
-### Scrape Speed Flow
+### Search Speed Flow
 ```
 content.js runAll(cfg):
-  cfg.scrapeSpeed = "normal" | "fast" | "max"
+  cfg.searchSpeed = "normal" | "fast" | "max"
     normal → _speedFactor = 1    (full delays)
     fast   → _speedFactor = 0.35 (35% of delays)
     max    → _speedFactor = 0    (no delays, instant)
@@ -475,13 +475,13 @@ content.js runAll(cfg):
 5. **Random between-email delay** — Configurable min/max range (default 1-3s)
 6. **Email redundancy check** — Track sent emails, skip duplicates across sessions
 7. **Excluded email domains** — Comma-separated substring match on domain part (after @)
-8. **Scrape speed selector** — Normal/Fast/Max controls delay multiplier in content script
+8. **Search speed selector** — Normal/Fast/Max controls delay multiplier in content script
 9. **Per-field compose speed** — 3s / 2s / 1s / 0.5s / Instant (replaced old ms-based values)
 10. **New logo** — `icon_new.png` (1254×1254, used across all UI surfaces)
 
 ### UI Elements
 - Two-column popup layout (controls left, logs right)
-- Split log panels (Scraping upper, Email Compose lower)
+- Split log panels (Searching upper, Email Compose lower)
 - Resume status text (read-only, shows filename from storage)
 - Auto-send options (checkbox, mode dropdown, batch size input)
 - Excluded domains input
@@ -509,12 +509,12 @@ content.js runAll(cfg):
 - Test email input + "Test Compose" button
 - Resume file picker + upload button
 - Dummy email row
-- Single merged log (replaced by split Scraping + Compose logs)
+- Single merged log (replaced by split Searching + Compose logs)
 
 ### From Code
 - `unmaximizeDialog()` function and minimize-button selector (not needed with `#inbox?compose=new` URL)
 - All `chrome.tabs.create` calls for Gmail (extension never opens Gmail tab — waits for user)
-- Separate scrape/compose log toggles
+- Separate search/compose log toggles
 
 ---
 
@@ -524,7 +524,7 @@ content.js runAll(cfg):
 1. **Speed `0` (Instant) bug** — All `|| 150` fallbacks replaced with null-safe checks (`!= null ? x : 150`)
 2. **Compose URL** — Changed from `?view=cm&fs=1&to=...&su=...&body=...` (full-screen, URL length limits) to `#inbox?compose=new` (normal popup compose)
 3. **Compose button persistence** — Added `composeActive` flag in storage so Stop button persists across popup close/reopen
-4. **Scrape speed label** — Restored descriptive text "(random delays)", "(reduced delays)", "(no delays)"
+4. **Search speed label** — Restored descriptive text "(random delays)", "(reduced delays)", "(no delays)"
 
 ### Behavioral Changes
 - **Single shared Gmail tab** — All emails reuse one open Gmail tab; fields overwritten in-place; `_resumeAttached` flag prevents re-attaching resume per dialog
@@ -555,9 +555,9 @@ content.js runAll(cfg):
 
 ```
 55ff506 feat: auto-send, batch mode, random delays, excluded domains, compose fixes
-03c2fc4 fix: match scrape speed implementation from fix/scroll-loop
+03c2fc4 fix: match search speed implementation from fix/scroll-loop
 a9cda97 fix: composeSpeed fallback 15000 -> 150
-f04de32 feat: add scrape speed selector for LinkedIn
+f04de32 feat: add search speed selector for LinkedIn
 4906aac feat: per-field delays, resume attachment, unmaximize compose
 1c8ee86 fix: speed in milliseconds not seconds
 ae47258 feat: generic email template, speed selector, remove variables

@@ -1,6 +1,6 @@
 const LinkedinParser = {
   STRAIGHT_EMAIL: /(?:[a-zA-Z0-9](?:[a-zA-Z0-9._%+-]{0,61}[a-zA-Z0-9])?@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\.[a-zA-Z]{2,})/g,
-  OBFUSCATED_CLEAN: /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g,
+  OBFUSCATED_CLEAN: /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/, // no 'g' — used with .test() in a loop
   MAILTO_RE: /mailto:([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/gi,
   PHONE_RE: /[\+]?[0-9]{1,3}[-.\s]?[(\s]?[0-9]{3,5}[)\s]?[-.\s]?[0-9]{4,6}/g,
   YEARS_RE: /(\d+)\+?\s*(?:years?|yrs?)\s*(?:of\s+)?(?:exp|experience)|(\d+)\+?\s*(?:-|to)\s*(\d+)\s*(?:years?|yrs?)/gi,
@@ -22,8 +22,8 @@ const LinkedinParser = {
       .replace(/\s*\[dot\]\s*/gi, ".")
       .replace(/\s*\(dot\)\s*/gi, ".")
       .replace(/\s*\{dot\}\s*/gi, ".")
-      .replace(/\s+at\s+/gi, "@")
-      .replace(/\s+dot\s+/gi, ".")
+      .replace(/\s+at\s+(?![^@\n]{0,40}@)/gi, "@")
+      .replace(/\s+dot\s+(?![^@\n]{0,40}@)/gi, ".")
       .replace(/\s*\[remove\]\s*/gi, "")
       .replace(/\s*\(remove\)\s*/gi, "")
       .replace(/\s*\{remove\}\s*/gi, "");
@@ -35,17 +35,35 @@ const LinkedinParser = {
 
   regexExtract(text) {
     const rawEmails = [];
-    const normalized = this.normalizeObfuscated(text);
+
+    // Pass 1: extract well-formed emails from original text FIRST,
+    // before any "at"/"dot" normalization can corrupt or shadow them.
     const mailtoHits = text.match(this.MAILTO_RE) || [];
     for (const h of mailtoHits) {
       let clean = h.replace(/mailto:/gi, "").trim();
-      if (this.OBFUSCATED_CLEAN.test(clean)) rawEmails.push(clean);
+      if (this.OBFUSCATED_CLEAN.test(clean) && !rawEmails.includes(clean)) rawEmails.push(clean);
     }
-    const standardHits = normalized.match(this.STRAIGHT_EMAIL) || [];
-    for (const h of standardHits) {
+    const directHits = text.match(this.STRAIGHT_EMAIL) || [];
+    for (const h of directHits) {
       let clean = h.replace(/[.,;:)\]}>]+$/, "").trim();
-      if (this.OBFUSCATED_CLEAN.test(clean)) rawEmails.push(clean);
+      if (this.OBFUSCATED_CLEAN.test(clean) && !rawEmails.includes(clean)) rawEmails.push(clean);
     }
+
+    // Pass 2: run obfuscation-normalization only when no real emails were found
+    // in the original text, avoiding "X at Y.tld" false positives from title/company text.
+    if (rawEmails.length === 0) {
+      const normalized = this.normalizeObfuscated(text);
+      const standardHits = normalized.match(this.STRAIGHT_EMAIL) || [];
+      for (const h of standardHits) {
+        let clean = h.replace(/[.,;:)\]}>]+$/, "").trim();
+        if (this.OBFUSCATED_CLEAN.test(clean) && !rawEmails.includes(clean)) {
+          // skip emails whose local part looks like a job title word (false positives from "at"→"@")
+          const local = clean.split("@")[0].toLowerCase();
+          if (!this.TITLE_KEYWORDS.some(kw => local === kw)) rawEmails.push(clean);
+        }
+      }
+    }
+
     const emails = this.cleanEmails([...new Set(rawEmails)]);
     const phones = [...new Set((text.match(this.PHONE_RE) || []))].slice(0, 3);
     let years = null;

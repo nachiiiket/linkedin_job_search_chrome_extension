@@ -1,4 +1,4 @@
-importScripts("utils/storage.js", "utils/exporter.js");
+importScripts("utils/storage.js", "utils/exporter.js", "utils/parser.js");
 
 let composeAbort = false;
 let _composeQueue = [];
@@ -22,12 +22,12 @@ async function getOrWaitGmailTab() {
   return null;
 }
 
-async function sendSingleJob(job, prefs, tabId) {
+async function sendSingleJob(job, prefs, tabId, forceSend) {
   const to = job.email.split('\n')[0].trim();
   const subject = prefs.emailSubject || '';
   const body = prefs.emailBody || '';
   const speed = prefs.composeSpeed != null ? Number(prefs.composeSpeed) : 1000;
-  const autoSend = prefs.autoSendEnabled === true;
+  const autoSend = forceSend === true || prefs.autoSendEnabled === true;
   const minDelay = Number(prefs.sendMinDelay) || 1000;
   const maxDelay = Number(prefs.sendMaxDelay) || 3000;
   broadcastComposeLog({ type: 'progress', message: `Sending to ${to}...` });
@@ -66,11 +66,18 @@ async function processQueue() {
     if (isDomainExcluded(job, excluded)) continue;
     const to = (job.email || '').split('\n')[0].trim().toLowerCase();
     if (sentEmails.includes(to)) continue;
-    const ok = await sendSingleJob(job, prefs, tabId);
-    if (ok) sentEmails.push(to);
+    const ok = await sendSingleJob(job, prefs, tabId, job._manual === true);
+    if (ok) {
+      sentEmails.push(to);
+      if (job._manual) {
+        await Storage.markManualEmailSent(job.job_id, new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }));
+        chrome.runtime.sendMessage({ action: "manualEmailsUpdated" }).catch(() => {});
+      }
+    }
     if (!ok) break;
   }
   _isComposing = false;
+  if (_composeQueue.length > 0) processQueue();
 }
 
 async function processBatch() {
@@ -86,7 +93,7 @@ async function processBatch() {
     if (isDomainExcluded(job, excluded)) continue;
     const to = (job.email || '').split('\n')[0].trim().toLowerCase();
     if (sentEmails.includes(to)) continue;
-    const ok = await sendSingleJob(job, prefs, tabId);
+    const ok = await sendSingleJob(job, prefs, tabId, job._manual === true);
     if (ok) sentEmails.push(to);
     if (!ok) break;
   }
@@ -255,6 +262,183 @@ function notify(title, msg) {
   chrome.notifications.create({ type: "basic", iconUrl: "icons/icon_new.png", title, message: msg });
 }
 
+/***** RIGHT-CLICK MANUAL EMAIL COMPOSE *****/
+
+const CONTEXT_MENU_ID = "compose-selected-email";
+const NOTE_MENU_ID = "paste-connection-note";
+const DM_MENU_ID = "paste-linkedin-dm";
+
+function manualJobId(email, url) {
+  let hash = 0;
+  const src = url + "|" + email;
+  for (let i = 0; i < src.length; i++) { hash = ((hash << 5) - hash + src.charCodeAt(i)) | 0; }
+  return "manual_" + Math.abs(hash);
+}
+
+// Record the human's manual right-click send in its own store (NOT the jobs table,
+// whose dedupe would drop empty-poster records). Holds email + post link + recruiter
+// context and gets flagged "sent" once the Gmail compose actually goes through.
+async function saveManualRecord(email, postUrl, poster) {
+  const emailLower = email.toLowerCase().trim();
+  const id = manualJobId(emailLower, postUrl);
+  const entry = {
+    id,
+    email: emailLower,
+    postUrl,
+    poster_name: poster.poster_name || "",
+    poster_title: poster.poster_title || "",
+    poster_profile_url: poster.poster_profile_url || "",
+    position: poster.position || "",
+    company: poster.company || "",
+    status: "queued",
+    createdAt: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })
+  };
+  await Storage.saveManualEmail(entry);
+  chrome.runtime.sendMessage({ action: "manualEmailsUpdated" }).catch(() => {});
+  return id;
+}
+
+async function createContextMenus() {
+  await chrome.contextMenus.removeAll();
+  chrome.contextMenus.create({
+    id: CONTEXT_MENU_ID,
+    title: "Compose and send",
+    contexts: ["selection", "link"],
+    documentUrlPatterns: ["https://*.linkedin.com/*", "http://*.linkedin.com/*"]
+  }, () => { if (chrome.runtime.lastError) console.error("context menu:", chrome.runtime.lastError.message); });
+  chrome.contextMenus.create({
+    id: NOTE_MENU_ID,
+    title: "Paste connection note",
+    contexts: ["editable"],
+    documentUrlPatterns: ["https://*.linkedin.com/*", "http://*.linkedin.com/*"]
+  }, () => { if (chrome.runtime.lastError) console.error("context menu:", chrome.runtime.lastError.message); });
+  chrome.contextMenus.create({
+    id: DM_MENU_ID,
+    title: "Paste LinkedIn DM",
+    contexts: ["editable"],
+    documentUrlPatterns: ["https://*.linkedin.com/*", "http://*.linkedin.com/*"]
+  }, () => { if (chrome.runtime.lastError) console.error("context menu:", chrome.runtime.lastError.message); });
+}
+
+chrome.runtime.onInstalled.addListener(() => createContextMenus());
+chrome.runtime.onStartup.addListener(() => createContextMenus());
+
+async function extractEmailFromContext(info) {
+  if (info.linkUrl && /^mailto:/i.test(info.linkUrl)) {
+    const m = info.linkUrl.match(/^mailto:([^?]+)/i);
+    if (m && m[1].trim() && /@/.test(m[1])) return m[1].trim();
+    return null;
+  }
+  const sel = (info.selectionText || "").trim();
+  if (!sel) return null;
+  const found = LinkedinParser.regexExtract(sel);
+  if (found.emails && found.emails.length) return found.emails[0];
+  return "NO_EMAIL_IN_SELECTION";
+}
+
+async function composeManualEmail(email, tab) {
+  const prefs = await Storage.getPreferences();
+  const excluded = (prefs.excludedEmailDomains || []).map(d => d.toLowerCase());
+  const to = email.toLowerCase().trim();
+
+  if (isDomainExcluded({ email: to }, excluded)) {
+    const m = "Blocked " + to + " - domain is on the excluded list";
+    broadcastComposeLog({ type: "skip", message: m });
+    notify("Email Blocked", m);
+    return;
+  }
+  const sentEmails = await Storage.getSentEmails();
+  if (sentEmails.includes(to)) {
+    const m = "Blocked " + to + " - already emailed";
+    broadcastComposeLog({ type: "skip", message: m });
+    notify("Email Blocked", m);
+    return;
+  }
+
+  let postUrl = (tab && tab.url) ? tab.url.split("?")[0] : "https://www.linkedin.com/";
+  const poster = { poster_name: "", poster_title: "", poster_profile_url: "", position: "", company: "" };
+  if (tab && tab.id) {
+    try {
+      const res = await chrome.tabs.sendMessage(tab.id, { action: "getContextMenuInfo" });
+      const c = res && res.context ? res.context : {};
+      if (c.url) postUrl = c.url;
+      poster.poster_name = c.poster_name || "";
+      poster.poster_title = c.poster_title || "";
+      poster.poster_profile_url = c.poster_profile_url || "";
+      poster.position = c.position || "";
+      poster.company = c.company || "";
+    } catch (e) { /* content script not ready - fall back to tab url only */ }
+  }
+
+  const manualId = await saveManualRecord(to, postUrl, poster);
+  const manualJob = {
+    job_id: manualId, email: to, job_url: postUrl, _manual: true
+  };
+  _composeQueue.push(manualJob);
+
+  // send now if Gmail is open and ready, otherwise keep it queued and flush when Gmail loads.
+  // processQueue() blocks on getOrWaitGmailTab (up to 2min), so only call it when Gmail is ready.
+  const gmail = await getGmailTab();
+  const readyNow = !!(gmail && (await isContentScriptReady(gmail.id)));
+  if (readyNow) processQueue();
+  broadcastComposeLog({ type: "progress", message: "Manual email to " + to + (readyNow ? " composing..." : " queued until Gmail opens.") });
+  notify(readyNow ? "Sending Email" : "Email Queued",
+    readyNow ? "Composing to " + to : "Will send to " + to + " as soon as Gmail is open");
+}
+
+chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+  if (info.menuItemId === CONTEXT_MENU_ID) {
+    const email = await extractEmailFromContext(info);
+    if (!email) return;
+    if (email === "NO_EMAIL_IN_SELECTION") {
+      notify("No Email Found", "The selected text does not contain an email address.");
+      return;
+    }
+    composeManualEmail(email, tab).catch(e => console.error("manual compose:", e));
+    return;
+  }
+  if (info.menuItemId === NOTE_MENU_ID) {
+    await pasteTemplateToTab(tab, "pasteConnectionNote", "connectionNote", "Connection Note");
+    return;
+  }
+  if (info.menuItemId === DM_MENU_ID) {
+    await pasteTemplateToTab(tab, "pasteLinkedInDm", "linkedinDm", "LinkedIn DM");
+    return;
+  }
+});
+
+// Send the stored template to the active LinkedIn tab so the content script can
+// paste it into the right-clicked (focused) editable field. Enforced 200-char
+// cap for the connection note happens in both storage fields and the content script.
+async function pasteTemplateToTab(tab, action, field, label) {
+  if (!tab || !tab.id) return;
+  const sendDevLog = async (text) => {
+    try { await chrome.tabs.sendMessage(tab.id, { action: "devLog", text }); } catch (e) {}
+  };
+  await sendDevLog("BG: " + label + " menu clicked");
+  const prefs = await Storage.getPreferences();
+  let template = (prefs[field] || "").trim();
+  await sendDevLog("BG: prefs loaded. " + field + " len=" + template.length + " (stored " + (prefs[field] || "").length + ")");
+  if (!template) { notify("No " + label + " Saved", "Save a " + label + " in the dashboard first."); await sendDevLog("BG: ABORT - empty template"); return; }
+  if (action === "pasteConnectionNote") template = template.slice(0, 200);
+  try {
+    const res = await chrome.tabs.sendMessage(tab.id, { action, data: { text: template } });
+    await sendDevLog("BG: content returned " + (res && res.ok ? "OK" : "ERR: " + (res && res.error)));
+    if (res && res.ok) notify(label + " Pasted", "Template inserted successfully.");
+    else notify(label + " Paste Failed", res && res.error ? res.error : "Could not find the input field.");
+  } catch (e) {
+    await sendDevLog("BG: tabs.sendMessage threw - " + e.message);
+    notify("Paste Failed", "The LinkedIn page needs a refresh.");
+  }
+}
+
+// flush queued manual composes the moment a Gmail tab finishes loading
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status === "complete" && tab && tab.url && tab.url.includes("mail.google.com")) {
+    processQueue();
+  }
+});
+
 async function updateBadge() {
   const stats = await Storage.getStats();
   chrome.action.setBadgeText({ text: String(stats.total || "") });
@@ -268,19 +452,34 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
     handleAutoSendJob(msg.job);
     return false;
   }
-  if (msg.action === "scrapingComplete") {
-    notify("Scraping Complete", "All searches finished.");
-    Storage.setState({ status: "idle", mode: "jobs", totalFound: 0 });
-    chrome.runtime.sendMessage({ action: "scrapingComplete" }).catch(() => {});
+  if (msg.action === "searchingComplete") {
+    notify("Searching Complete", "All searches finished.");
+    Storage.getState().then(st => Storage.setState({ status: "idle", mode: st.mode || "jobs", totalFound: 0 }));
+    chrome.runtime.sendMessage({ action: "searchingComplete" }).catch(() => {});
     updateBadge();
     handleAutoSendFlush();
+    return false;
+  }
+  // Runtime fallbacks used by the in-page panel when its port is unavailable
+  // (e.g. right after the service worker restarts). Mirrors the popup-port
+  // handlers below.
+  if (msg.action === "openDashboard") {
+    chrome.tabs.create({ url: chrome.runtime.getURL("dashboard.html") });
+    return false;
+  }
+  if (msg.action === "startSearching") { startSearching(msg.config); return false; }
+  if (msg.action === "stopSearching") { stopSearching(); return false; }
+  if (msg.action === "skipQuery" || msg.action === "pauseSearching" || msg.action === "resumeSearching") {
+    if (msg.action === "skipQuery") { if (activeTabId) chrome.tabs.sendMessage(activeTabId, { action: "skipQuery" }).catch(() => {}); broadcastSearchControl("skipped"); }
+    if (msg.action === "pauseSearching") { chrome.storage.local.set({ searchPaused: true }, () => { if (activeTabId) chrome.tabs.sendMessage(activeTabId, { action: "pauseSearching" }).catch(() => {}); broadcastSearchControl("paused"); }); }
+    if (msg.action === "resumeSearching") { chrome.storage.local.set({ searchPaused: false }, () => { if (activeTabId) chrome.tabs.sendMessage(activeTabId, { action: "resumeSearching" }).catch(() => {}); broadcastSearchControl("resumed"); }); }
     return false;
   }
 });
 
 chrome.action.onClicked.addListener(() => { chrome.runtime.openOptionsPage(); });
 
-async function startScraping(config) {
+async function startSearching(config) {
   const tab = await getLinkedInTab();
   if (!tab) { notify("LinkedIn Required", "Open a LinkedIn tab first."); return; }
   activeTabId = tab.id;
@@ -288,25 +487,50 @@ async function startScraping(config) {
   const ready = await isContentScriptReady(tab.id);
   if (!ready) { notify("Reload LinkedIn", "Please refresh the LinkedIn page for the extension to load."); return; }
 
-  await Storage.setState({ status: "scraping", mode: config.searchMode || "jobs", totalFound: 0 });
+  await Storage.setState({ status: "searching", mode: config.searchMode || "jobs", totalFound: 0 });
+  broadcastState();
   const modeLabel = config.searchMode === "posts" ? "posts" : "jobs";
-  notify("Scraping Started", "Searching " + (config.jobRoles || []).length + " roles in " + modeLabel);
+  notify("Searching Started", "Searching " + (config.jobRoles || []).length + " roles in " + modeLabel);
 
-  chrome.tabs.sendMessage(tab.id, { action: "startScraping", config }).catch(() => {});
+  chrome.tabs.sendMessage(tab.id, { action: "startSearching", config }).catch(() => {});
 }
 
-async function stopScraping() {
-  if (activeTabId) { chrome.tabs.sendMessage(activeTabId, { action: "stopScraping" }).catch(() => {}); }
-  await Storage.setState({ status: "idle", mode: "jobs", totalFound: 0, stopRequested: false });
-  notify("Scraping Stopped", "The scraper was stopped.");
+async function stopSearching() {
+  // Deliver stop to every LinkedIn content script: activeTabId can be stale or
+  // lost when the service worker restarts, so we never rely on it alone.
+  const byUrl = await chrome.tabs.query({ url: "https://*.linkedin.com/*" });
+  const all = await chrome.tabs.query({});
+  const targets = (byUrl.length ? byUrl : all).filter(t => t.id != null && t.url && t.url.includes("linkedin.com"));
+  for (const t of targets) { chrome.tabs.sendMessage(t.id, { action: "stopSearching" }).catch(() => {}); }
+  await chrome.storage.local.set({ searchPaused: false });
+  const st = await Storage.getState();
+  // Persist stopRequested so an in-flight content script's checkStop() halts
+  // even if the tab message is missed; the script clears it when it winds down.
+  await Storage.setState({ status: "idle", mode: st.mode || "jobs", totalFound: 0, stopRequested: true });
+  broadcastState();
+  notify("Searching Stopped", "The search was stopped.");
+}
+
+function broadcastState() {
+  Promise.all([Storage.getState(), Storage.getStats()]).then(([s, st]) => {
+    chrome.runtime.sendMessage({ action: "state", state: s, stats: st }).catch(() => {});
+  });
+}
+
+function broadcastSearchControl(type) {
+  chrome.runtime.sendMessage({ action: "searchControl", type }).catch(() => {});
 }
 
 chrome.runtime.onConnect.addListener(port => {
   if (port.name === "popup") {
     port.onMessage.addListener(async msg => {
-      if (msg.action === "startScraping") { await startScraping(msg.config); port.postMessage({ action: "started" }); }
-      if (msg.action === "stopScraping") { await stopScraping(); port.postMessage({ action: "stopped" }); }
+      if (msg.action === "startSearching") { await startSearching(msg.config); port.postMessage({ action: "started" }); }
+      if (msg.action === "stopSearching") { await stopSearching(); port.postMessage({ action: "stopped" }); }
+      if (msg.action === "skipQuery") { if (activeTabId) chrome.tabs.sendMessage(activeTabId, { action: "skipQuery" }).catch(() => {}); broadcastSearchControl("skipped"); }
+      if (msg.action === "pauseSearching") { await chrome.storage.local.set({ searchPaused: true }); if (activeTabId) chrome.tabs.sendMessage(activeTabId, { action: "pauseSearching" }).catch(() => {}); broadcastSearchControl("paused"); }
+      if (msg.action === "resumeSearching") { await chrome.storage.local.set({ searchPaused: false }); if (activeTabId) chrome.tabs.sendMessage(activeTabId, { action: "resumeSearching" }).catch(() => {}); broadcastSearchControl("resumed"); }
       if (msg.action === "getState") { const s = await Storage.getState(); const st = await Storage.getStats(); port.postMessage({ action: "state", state: s, stats: st }); }
+      if (msg.action === "openDashboard") { chrome.tabs.create({ url: chrome.runtime.getURL("dashboard.html") }); }
       if (msg.action === "enableComposeMode") {
         composeAbort = false;
         await Storage.setComposeState(true);
@@ -328,8 +552,11 @@ chrome.runtime.onConnect.addListener(port => {
 
   if (port.name === "dashboard") {
     port.onMessage.addListener(async msg => {
-      if (msg.action === "startScraping") { await startScraping(msg.config); }
-      if (msg.action === "stopScraping") { await stopScraping(); }
+      if (msg.action === "startSearching") { await startSearching(msg.config); }
+      if (msg.action === "stopSearching") { await stopSearching(); }
+      if (msg.action === "skipQuery") { if (activeTabId) chrome.tabs.sendMessage(activeTabId, { action: "skipQuery" }).catch(() => {}); broadcastSearchControl("skipped"); }
+      if (msg.action === "pauseSearching") { await chrome.storage.local.set({ searchPaused: true }); if (activeTabId) chrome.tabs.sendMessage(activeTabId, { action: "pauseSearching" }).catch(() => {}); broadcastSearchControl("paused"); }
+      if (msg.action === "resumeSearching") { await chrome.storage.local.set({ searchPaused: false }); if (activeTabId) chrome.tabs.sendMessage(activeTabId, { action: "resumeSearching" }).catch(() => {}); broadcastSearchControl("resumed"); }
       if (msg.action === "getState") { const s = await Storage.getState(); const st = await Storage.getStats(); port.postMessage({ action: "state", state: s, stats: st }); }
       if (msg.action === "getJobs") { const j = await Storage.getJobs(); port.postMessage({ action: "jobs", jobs: j }); }
       if (msg.action === "exportCSV") { Exporter.downloadCSV(await Storage.getJobs()); }

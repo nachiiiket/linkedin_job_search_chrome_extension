@@ -4,7 +4,7 @@ function connect() {
   port = chrome.runtime.connect({ name: "popup" });
   port.onMessage.addListener(m => {
     if (m.action === "state") updateUI(m.state, m.stats);
-    if (m.action === "started") setStatus("scraping");
+    if (m.action === "started") setStatus("searching");
     if (m.action === "stopped") setStatus("idle");
     if (m.action === "composeProgress") handleComposeProgress(m);
   });
@@ -12,25 +12,70 @@ function connect() {
 }
 
 function updateUI(state, stats) {
-  document.getElementById("statusText").textContent = state.status === "scraping" ? "Scraping..." : "Idle";
-  document.getElementById("statusText").className = state.status === "scraping" ? "status-scraping" : "status-idle";
+  document.getElementById("statusText").textContent = state.status === "searching" ? "Searching..." : "Idle";
+  document.getElementById("statusText").className = state.status === "searching" ? "status-searching" : "status-idle";
   document.getElementById("statTotal").textContent = (stats || {}).total || 0;
   document.getElementById("statEmail").textContent = (stats || {}).withEmail || 0;
   document.getElementById("statComposed").textContent = (stats || {}).composed || 0;
-  document.getElementById("btnStart").style.display = state.status === "scraping" ? "none" : "block";
-  document.getElementById("btnStop").style.display = state.status === "scraping" ? "block" : "none";
-  document.getElementById("searchMode").disabled = state.status === "scraping";
-  if (state.mode === "posts") document.getElementById("searchMode").value = "posts";
-  else if (state.mode === "both") document.getElementById("searchMode").value = "both";
-  else document.getElementById("searchMode").value = "jobs";
+  document.getElementById("btnStart").style.display = state.status === "searching" ? "none" : "block";
+  document.getElementById("btnStop").style.display = state.status === "searching" ? "block" : "none";
+  document.getElementById("searchMode").disabled = state.status === "searching";
+  setSearchControls(state.status === "searching");
+  const pauseBtn = document.getElementById("btnPause");
+  pauseBtn.textContent = "Pause";
+  pauseBtn.classList.remove("btn-primary");
+  if (state.status === "searching") {
+    if (state.mode === "posts") document.getElementById("searchMode").value = "posts";
+    else if (state.mode === "both") document.getElementById("searchMode").value = "both";
+    else document.getElementById("searchMode").value = "jobs";
+  }
+}
+
+function handleSearchProgress(p) {
+  const row = document.getElementById("searchProgressRow");
+  const bar = document.getElementById("searchProgressBar");
+  const text = document.getElementById("searchProgressText");
+  if (!row || !bar) return;
+  const total = p.total || 0;
+  row.style.display = total > 0 ? "flex" : "none";
+  const pct = total > 0 ? Math.round((p.completed / total) * 100) : 0;
+  bar.style.width = pct + "%";
+  text.textContent = p.completed + "/" + total;
+}
+
+function setSearchControls(searching) {
+  const d = searching ? "block" : "none";
+  document.getElementById("btnSkip").style.display = d;
+  document.getElementById("btnPause").style.display = d;
+}
+
+function handleSearchControl(type) {
+  const btn = document.getElementById("btnPause");
+  if (type === "paused") {
+    btn.textContent = "Resume";
+    btn.classList.add("btn-primary");
+    addLogEntry("searchLog", { type: "warn", text: "Searching paused" });
+  } else if (type === "resumed") {
+    btn.textContent = "Pause";
+    btn.classList.remove("btn-primary");
+    addLogEntry("searchLog", { type: "info", text: "Searching resumed" });
+  } else if (type === "skipped") {
+    addLogEntry("searchLog", { type: "warn", text: "Skip requested - moving to next query" });
+  }
 }
 
 function setStatus(s) {
-  document.getElementById("statusText").textContent = s === "scraping" ? "Scraping..." : "Idle";
-  document.getElementById("statusText").className = s === "scraping" ? "status-scraping" : "status-idle";
-  document.getElementById("btnStart").style.display = s === "scraping" ? "none" : "block";
-  document.getElementById("btnStop").style.display = s === "scraping" ? "block" : "none";
-  document.getElementById("searchMode").disabled = s === "scraping";
+  document.getElementById("statusText").textContent = s === "searching" ? "Searching..." : "Idle";
+  document.getElementById("statusText").className = s === "searching" ? "status-searching" : "status-idle";
+  document.getElementById("btnStart").style.display = s === "searching" ? "none" : "block";
+  document.getElementById("btnStop").style.display = s === "searching" ? "block" : "none";
+  document.getElementById("searchMode").disabled = s === "searching";
+  setSearchControls(s === "searching");
+  if (s !== "searching") {
+    const btn = document.getElementById("btnPause");
+    btn.textContent = "Pause";
+    btn.classList.remove("btn-primary");
+  }
 }
 
 function setComposeUI(active) {
@@ -79,15 +124,17 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("onlyWithEmail").checked = prefs.onlyWithEmail === true;
   document.getElementById("jobsFirstPageOnly").checked = prefs.jobsFirstPageOnly !== false;
   document.getElementById("searchMode").value = prefs.searchMode || "jobs";
-  document.getElementById("scrapeSpeed").value = prefs.scrapeSpeed || "normal";
+  document.getElementById("searchSpeed").value = prefs.searchSpeed || "normal";
   document.getElementById("popupCompanies").value = (prefs.targetCompanies || []).join(", ");
+  document.getElementById("popupPostDateFilter").value = prefs.postDateFilter || "";
   document.getElementById("popupSpeed").value = prefs.composeSpeed != null ? prefs.composeSpeed : 1000;
-  document.getElementById("scrapeSpeed").value = prefs.scrapeSpeed || "normal";
   document.getElementById("popupExcludedDomains").value = (prefs.excludedEmailDomains || []).join(", ");
   document.getElementById("popupAutoSend").checked = prefs.autoSendEnabled === true;
   document.getElementById("popupAutoSendMode").value = prefs.autoSendMode || "realtime";
   document.getElementById("popupBatchSize").value = prefs.batchSize || 10;
   if (prefs.autoSendEnabled) document.getElementById("popupAutoSendOptions").style.display = "flex";
+  document.getElementById("popupInPagePanel").checked = prefs.showInPagePanel === true;
+  document.getElementById("popupDebugLogs").checked = prefs.showDebugLogs === true;
 
   const r = await Storage.getResume();
   document.getElementById("popupResumeStatus").textContent = r ? "Resume: " + r.name : "Resume: none";
@@ -96,20 +143,38 @@ document.addEventListener("DOMContentLoaded", async () => {
     document.getElementById("popupAutoSendOptions").style.display = document.getElementById("popupAutoSend").checked ? "flex" : "none";
   });
 
+  ["popupInPagePanel", "popupDebugLogs"].forEach(id => {
+    document.getElementById(id).addEventListener("change", async () => {
+      const p = await Storage.getPreferences();
+      p.showInPagePanel = document.getElementById("popupInPagePanel").checked;
+      p.showDebugLogs = document.getElementById("popupDebugLogs").checked;
+      await Storage.savePreferences(p);
+    });
+  });
+
   document.getElementById("btnStart").addEventListener("click", async () => {
     prefs.searchMode = document.getElementById("searchMode").value;
     prefs.onlyWithEmail = document.getElementById("onlyWithEmail").checked;
     prefs.jobsFirstPageOnly = document.getElementById("jobsFirstPageOnly").checked;
-    prefs.scrapeSpeed = document.getElementById("scrapeSpeed").value;
+    prefs.searchSpeed = document.getElementById("searchSpeed").value;
     prefs.targetCompanies = document.getElementById("popupCompanies").value.split(",").map(s => s.trim()).filter(Boolean);
-    prefs.scrapeSpeed = document.getElementById("scrapeSpeed").value;
+    prefs.postDateFilter = document.getElementById("popupPostDateFilter").value;
+    prefs.searchSpeed = document.getElementById("searchSpeed").value;
     await Storage.savePreferences(prefs);
     await Storage.setState({ stopRequested: false });
-    document.getElementById("scrapeLog").innerHTML = '';
-    if (port) port.postMessage({ action: "startScraping", config: prefs });
+    document.getElementById("searchLog").innerHTML = '';
+    handleSearchProgress({ completed: 0, total: 0 });
+    if (port) port.postMessage({ action: "startSearching", config: prefs });
   });
   document.getElementById("btnStop").addEventListener("click", () => {
-    if (port) port.postMessage({ action: "stopScraping" });
+    if (port) port.postMessage({ action: "stopSearching" });
+  });
+  document.getElementById("btnSkip").addEventListener("click", () => {
+    if (port) port.postMessage({ action: "skipQuery" });
+  });
+  document.getElementById("btnPause").addEventListener("click", () => {
+    const paused = document.getElementById("btnPause").textContent === "Resume";
+    if (port) port.postMessage({ action: paused ? "resumeSearching" : "pauseSearching" });
   });
   document.getElementById("btnDashboard").addEventListener("click", () => {
     chrome.tabs.create({ url: "dashboard.html" });
@@ -134,15 +199,18 @@ document.addEventListener("DOMContentLoaded", async () => {
 });
 
 chrome.runtime.onMessage.addListener((msg) => {
+  if (msg.action === "state") { if (msg.state) updateUI(msg.state, msg.stats); }
   if (msg.action === "statsUpdate") {
     document.getElementById("statTotal").textContent = msg.stats.total;
     document.getElementById("statEmail").textContent = msg.stats.withEmail;
     document.getElementById("statComposed").textContent = msg.stats.composed;
     chrome.action.setBadgeText({ text: String(msg.stats.total) });
   }
-  if (msg.action === "scrapingComplete") setStatus("idle");
+  if (msg.action === "searchingComplete") { setStatus("idle"); handleSearchProgress({ completed: 0, total: 0 }); }
+  if (msg.action === "progress") handleSearchProgress(msg);
+  if (msg.action === "searchControl") handleSearchControl(msg.type);
   if (msg.action === "log") {
-    addLogEntry("scrapeLog", { type: "info", text: msg.text });
+    addLogEntry("searchLog", { type: "info", text: msg.text });
   }
   if (msg.action === "composeLog") {
     addLogEntry("composeLog", msg);

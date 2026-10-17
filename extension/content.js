@@ -1,12 +1,75 @@
 let shouldStop = false;
 let _speedFactor = 1;
+const _progress = { completed: 0, total: 0 };
+let _skipCurrent = false;
+let _skipResolve = null;
+let _abortQuery = false;
+let _qctx = null;
+let _qdelta = null;
+let _disabledQueries = [];
+
+function triggerSkip() {
+  _skipCurrent = true;
+  // Break the in-flight searcher too, otherwise a "skipped" query keeps saving
+  // results while the next query's navigation interrupts it mid-flight.
+  _abortQuery = true;
+  if (_skipResolve) {
+    const r = _skipResolve;
+    _skipResolve = null;
+    _skipCurrent = false;
+    r();
+  }
+}
+
+function qcount(field, n) {
+  if (_qdelta && typeof _qdelta[field] === "number") _qdelta[field] += (n == null ? 1 : n);
+}
+
+function todayIst() {
+  const d = toIstDate(new Date());
+  return d ? d.toISOString().slice(0, 10) : "";
+}
+
+async function bumpDay(fields) {
+  try { await Storage.bumpDailyStat(todayIst(), fields); } catch (e) {}
+}
+
+function stampQuery(d, phase) {
+  if (!d) return d;
+  if (!d.found_at) d.found_at = new Date().toISOString();
+  d.phase = phase;
+  d.query_label = _qctx ? _qctx.label : (d.query_label || "");
+  return d;
+}
+
+function isDomainExcluded(email, domains) {
+  if (!email || !domains || !domains.length) return false;
+  const e = String(email).toLowerCase();
+  return domains.some(d => { const s = String(d || "").toLowerCase().trim(); return s && e.includes(s); });
+}
+
+function broadcastProgress() {
+  send("progress", { completed: _progress.completed, total: _progress.total });
+}
+
+async function waitWhilePaused() {
+  while (!(await checkStop())) {
+    const r = await chrome.storage.local.get("searchPaused");
+    if (!r.searchPaused) return;
+    await new Promise(r2 => setTimeout(r2, 1000));
+  }
+}
 
 function rand(lo, hi) {
   const delay = (lo + Math.random() * (hi - lo)) * _speedFactor;
   return new Promise(r => setTimeout(r, delay));
 }
 function closeMenu() { document.body.click(); document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })); }
-function send(a, d) { try { chrome.runtime.sendMessage({ action: a, ...(d || {}) }, () => {}); } catch (e) {} }
+function send(a, d) {
+  (d || (d = {}));
+  try { panelHandleIncoming({ action: a, ...d }); } catch (e) {}
+  try { chrome.runtime.sendMessage({ action: a, ...d }, () => {}); } catch (e) {}
+}
 
 async function checkStop() {
   const s = await Storage.getState();
@@ -32,8 +95,8 @@ function normalizeObfuscated(text) {
     .replace(/\s*\[dot\]\s*/gi, ".")
     .replace(/\s*\(dot\)\s*/gi, ".")
     .replace(/\s*\{dot\}\s*/gi, ".")
-    .replace(/\s+at\s+/gi, "@")
-    .replace(/\s+dot\s+/gi, ".")
+    .replace(/\s+at\s+(?![^@\n]{0,40}@)/gi, "@")
+    .replace(/\s+dot\s+(?![^@\n]{0,40}@)/gi, ".")
     .replace(/\s*\[remove\]\s*/gi, "")
     .replace(/\s*\(remove\)\s*/gi, "")
     .replace(/\s*\{remove\}\s*/gi, "");
@@ -81,6 +144,9 @@ function isOnCorrectPage(targetUrl) {
     const tLoc = t.searchParams.get("location");
     const cLoc = c.searchParams.get("location");
     if (tLoc && tLoc !== cLoc) return false;
+    const tDate = t.searchParams.get("datePosted");
+    const cDate = c.searchParams.get("datePosted");
+    if ((tDate || "") !== (cDate || "")) return false;
     return true;
   } catch (e) {
     return window.location.href.includes(targetUrl.split("?")[0]);
@@ -146,33 +212,49 @@ async function nextJobPage(pg) {
   return false;
 }
 
-async function scrapeJobs(cfg) {
+async function searchJobs(cfg) {
   const max = cfg.maxJobsPerRun || 50;
   await waitEl("[data-job-id], .jobs-search-results-list", 12000);
   await rand(1500, 2500);
   let found = 0, pg = 1;
 
-  while (found < max && !(await checkStop())) {
+  while (found < max && !(await checkStop()) && !_skipCurrent && !_abortQuery) {
+    await waitWhilePaused();
     scrollJobs(); await rand(600, 1000);
     const ids = getJobIds();
     if (!ids.length) { send("log", { text: "No job cards on page " + pg }); break; }
     send("log", { text: "Jobs Page " + pg + ": " + ids.length + " cards" });
 
     for (const id of ids) {
-      if (await checkStop() || found >= max) break;
+      if (await checkStop() || _skipCurrent || _abortQuery || found >= max) break;
+      await waitWhilePaused();
       const { jobs } = await chrome.storage.local.get("jobs");
-      if ((jobs || []).some(j => j.job_id === id)) continue;
+      if ((jobs || []).some(j => j.job_id === id)) { qcount("excludedDupe"); continue; }
       if (!(await clickCard(id))) continue;
       const det = extractJob(id);
+      stampQuery(det, "jobs");
       if (cfg.excludeCompanies && cfg.excludeCompanies.length) {
-        if (cfg.excludeCompanies.some(e => (det.company || "").toLowerCase().includes(e.toLowerCase()))) continue;
+        if (cfg.excludeCompanies.some(e => (det.company || "").toLowerCase().includes(e.toLowerCase()))) {
+          qcount("excludedCompany"); continue;
+        }
       }
-      if (cfg.onlyWithEmail && !det.email) continue;
+      if (cfg.onlyWithEmail && !det.email) {
+        qcount("excludedNoEmail"); continue;
+      }
+      if (det.email && isDomainExcluded(det.email, cfg.excludedEmailDomains)) {
+        qcount("excludedDomain"); await bumpDay({ excludedDomain: 1 }); continue;
+      }
       const saved = await Storage.saveJob(det);
-      if (saved) { found++; send("jobFound", { job: det }); send("log", { text: "[" + found + "] " + det.position + " @ " + det.company + (det.email ? " - " + det.email : "") }); }
+      if (saved) {
+        found++; qcount("found");
+        if (det.email) { qcount("withEmail"); await bumpDay({ found: 1, withEmail: 1 }); }
+        else await bumpDay({ found: 1 });
+        send("jobFound", { job: det });
+        send("log", { text: "[" + found + "] " + det.position + " @ " + det.company + (det.email ? " - " + det.email : "") });
+      } else { qcount("excludedDupe"); }
       await rand(800, 2000);
     }
-    if (await checkStop() || found >= max) break;
+    if (await checkStop() || found >= max || _abortQuery) break;
     if (cfg.jobsFirstPageOnly) break;
     if (!(await nextJobPage(pg))) break;
     pg++;
@@ -183,8 +265,10 @@ async function scrapeJobs(cfg) {
 
 /* ====== POSTS SEARCH ====== */
 
-function postsUrl(query) {
-  return "https://www.linkedin.com/search/results/content/?keywords=" + encodeURIComponent(query) + "&origin=GLOBAL_SEARCH_HEADER&sortBy=%22date_posted%22";
+function postsUrl(query, dateFilter) {
+  let url = "https://www.linkedin.com/search/results/content/?keywords=" + encodeURIComponent(query) + "&origin=GLOBAL_SEARCH_HEADER&sortBy=%22date_posted%22";
+  if (dateFilter) url += "&datePosted=" + encodeURIComponent('["' + dateFilter + '"]');
+  return url;
 }
 
 function simulateClick(el) {
@@ -329,6 +413,734 @@ function extractPosterFromFeed(el) {
   return r;
 }
 
+/* ====== RIGHT-CLICK EMAIL CONTEXT ====== */
+let _manualContext = null;
+let _manualTarget = null;
+
+// On right-click, synchronously resolve the feed card and poster info from the
+// clicked element (if any). No menu clicks, no clipboard, no async - the post
+// url falls back to the current page URL, which the background overrides.
+function captureMenuContext(e) {
+  const path = e.composedPath && e.composedPath();
+  const node = (path && path[0]) || (e.target instanceof Element ? e.target : (e.target ? e.target.parentElement : null));
+  _manualTarget = node;
+  try {
+    ljfLog("contextmenu on: " + (node ? node.tagName + "." + (node.className || "").toString().split(" ")[0] + (node.id ? "#" + node.id : "") : "none"));
+  } catch (err) {}
+  const card = node ? node.closest(".feed-shared-update-v2, [data-urn*='activity'], li.reusable-search__result-container") : null;
+  let poster = { poster_name: "", poster_title: "", poster_profile_url: "" };
+  let position = "", company = "";
+
+  if (card) {
+    poster = extractPosterFromFeed(card);
+  } else {
+    const p = posterInfo();
+    if (p.poster_name) poster = p;
+    try { const t = document.querySelector(".jobs-unified-top-card__job-title h1, .jobs-unified-top-card__job-title"); if (t) position = t.innerText.trim(); } catch (_) {}
+    try { const c = document.querySelector(".jobs-unified-top-card__company-name"); if (c) company = c.innerText.trim(); } catch (_) {}
+  }
+  _manualContext = { url: window.location.href.split("?")[0], poster_name: poster.poster_name, poster_title: poster.poster_title, poster_profile_url: poster.poster_profile_url, position, company };
+}
+
+document.addEventListener("contextmenu", captureMenuContext, true);
+
+/* ====== IN-PAGE EXTENSION PANEL ======
+   Mirrors the extension popup (status/stats, LinkedIn search controls, email
+   compose controls + live logs) as a fixed panel on the right edge of the
+   LinkedIn page, so the extension can be driven without opening Chrome's
+   popup. Enabled via the popup toggle pref `showInPagePanel`. Debug logging
+   (right-click paste diagnostics) is gated behind `showDebugLogs`, off by
+   default. The panel talks to the background over a "popup"-named port, the
+   exact same contract the real popup uses, and receives the same runtime
+   broadcasts the popup listens to. */
+let _panel = null;
+let _pPort = null;
+let _pPrefs = { showInPagePanel: false, showDebugLogs: false };
+let _pRefs = {};
+let _pLastCompose = "";
+
+const PANEL_CSS = `
+#ljf-panel{position:fixed;right:0;top:0;bottom:0;width:396px;z-index:2147483646;
+  background:#f4f6fa;box-shadow:-8px 0 24px rgba(8,28,58,.16);display:flex;flex-direction:column;
+  font:13px/1.4 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1f2a37;
+  border-radius:14px 0 0 14px;overflow:hidden;transition:right .25s ease}
+#ljf-panel *{box-sizing:border-box;margin:0;padding:0}
+#ljf-panel button{cursor:pointer;font-family:inherit}
+#ljf-panel .ljf-head{display:flex;align-items:center;gap:10px;padding:14px;flex-shrink:0;
+  background:linear-gradient(135deg,#0a66c2 0%,#004182 62%,#03315a 100%);color:#fff;
+  box-shadow:0 2px 10px rgba(4,45,86,.28)}
+#ljf-panel .ljf-logo{width:28px;height:28px;border-radius:8px;flex-shrink:0;object-fit:cover;
+  box-shadow:0 2px 4px rgba(0,0,0,.28);background:#fff}
+#ljf-panel .ljf-title{font-weight:700;flex:1;font-size:14px;letter-spacing:.2px;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+#ljf-panel .ljf-status{background:rgba(255,255,255,.16);padding:3px 10px;border-radius:12px;
+  font-size:11px;font-weight:700;letter-spacing:.3px;backdrop-filter:blur(2px)}
+#ljf-panel .ljf-status.on{background:#34a853;box-shadow:0 0 0 3px rgba(52,168,83,.28)}
+#ljf-panel .ljf-collapse{background:transparent;border:none;color:#fff;width:28px;height:28px;
+  border-radius:50%;display:flex;align-items:center;justify-content:center;transition:background .15s}
+#ljf-panel .ljf-collapse:hover{background:rgba(255,255,255,.2)}
+#ljf-panel .ljf-restore{display:none;position:fixed;right:14px;top:14px;z-index:2147483647;width:44px;height:44px;
+  border-radius:12px;border:none;padding:0;align-items:center;justify-content:center;
+  background:linear-gradient(135deg,#0a66c2,#004182);box-shadow:0 6px 18px rgba(4,45,86,.4);color:#fff}
+#ljf-panel .ljf-restore:hover{transform:translateY(-1px)}
+#ljf-panel.ljf-hidden .ljf-restore{display:flex}
+#ljf-panel.ljf-hidden{right:-404px}
+#ljf-panel .ljf-tabs{display:flex;gap:4px;margin:10px 14px 0;padding:4px;background:#e7ebf1;
+  border-radius:11px;flex-shrink:0}
+#ljf-panel .ljf-tab{flex:1;padding:7px 0;background:transparent;border:none;border-radius:8px;
+  font-size:12px;font-weight:700;color:#6b7681;transition:all .18s}
+#ljf-panel .ljf-tab:hover{color:#0a66c2}
+#ljf-panel .ljf-tab.active{background:#fff;color:#0a66c2;box-shadow:0 1px 4px rgba(10,45,80,.16)}
+#ljf-panel .ljf-tabpane{display:none;flex-direction:column;flex:1;min-height:0;padding:12px 14px;overflow:hidden}
+#ljf-panel .ljf-tabpane.active{display:flex}
+#ljf-panel .ljf-stats{display:flex;gap:8px;margin-bottom:12px;flex-shrink:0}
+#ljf-panel .ljf-stat{flex:1;text-align:center;background:#fff;border:1px solid #e6eaf0;
+  border-radius:12px;padding:10px 4px 8px;box-shadow:0 1px 2px rgba(10,30,60,.05)}
+#ljf-panel .ljf-stat span.ljf-num{display:block;font-size:22px;font-weight:800;color:#0a66c2;letter-spacing:-.5px}
+#ljf-panel .ljf-stat span.ljf-lbl{font-size:10px;color:#8a94a0;text-transform:uppercase;letter-spacing:.5px;font-weight:600}
+#ljf-panel .ljf-progress{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+#ljf-panel .ljf-bar{flex:1;height:8px;background:#e0e6ee;border-radius:99px;overflow:hidden}
+#ljf-panel .ljf-fill{height:100%;width:0%;background:linear-gradient(90deg,#0a66c2,#57b5e5);border-radius:99px;transition:width .4s}
+#ljf-panel .ljf-progtext{font-size:11px;font-weight:700;color:#5b6672;white-space:nowrap}
+#ljf-panel .ljf-field{display:flex;align-items:center;gap:10px;margin-bottom:9px}
+#ljf-panel .ljf-field label{font-size:12px;font-weight:600;color:#4b5563;width:82px;flex-shrink:0}
+#ljf-panel .ljf-field select,#ljf-panel .ljf-field input{flex:1;min-width:0;padding:7px 9px;
+  border:1px solid #d3dae3;border-radius:9px;font-size:12px;color:#1f2a37;background:#fff;
+  transition:border-color .15s,box-shadow .15s}
+#ljf-panel .ljf-field select:focus,#ljf-panel .ljf-field input:focus{outline:none;border-color:#0a66c2;
+  box-shadow:0 0 0 3px rgba(10,102,194,.16)}
+#ljf-panel .ljf-field select:disabled{opacity:.5;background:#f1f3f6}
+#ljf-panel .ljf-checks{display:flex;gap:8px;margin-bottom:9px;flex-shrink:0;flex-wrap:wrap}
+#ljf-panel .ljf-checks label{font-size:12px;color:#374151;display:flex;align-items:center;gap:6px;
+  background:#fff;border:1px solid #e2e8f0;padding:5px 10px;border-radius:99px;cursor:pointer;user-select:none;
+  transition:all .15s}
+#ljf-panel .ljf-checks label:hover{border-color:#c3d2e4}
+#ljf-panel .ljf-checks label:has(input:checked){border-color:#0a66c2;background:#e9f2fc;color:#0a66c2}
+#ljf-panel .ljf-checks input{accent-color:#0a66c2}
+#ljf-panel .ljf-actions{display:flex;gap:8px;margin-bottom:10px;flex-shrink:0;flex-wrap:wrap}
+#ljf-panel .ljf-btn{padding:7px 14px;border:none;border-radius:9px;font-size:12px;font-weight:700;color:#374151;
+  background:#eef1f5;transition:all .15s;box-shadow:0 1px 1px rgba(10,30,60,.05)}
+#ljf-panel .ljf-btn:hover{background:#dfe5ec;transform:translateY(-1px)}
+#ljf-panel .ljf-btn:active{transform:translateY(0)}
+#ljf-panel .ljf-btn.ljf-primary{background:linear-gradient(135deg,#0a66c2,#0951a0);color:#fff;
+  box-shadow:0 2px 6px rgba(10,102,194,.35)}
+#ljf-panel .ljf-btn.ljf-primary:hover{background:linear-gradient(135deg,#0b74d6,#0a66c2)}
+#ljf-panel .ljf-btn.ljf-danger{background:#dc2626;color:#fff;box-shadow:0 2px 6px rgba(220,38,38,.3)}
+#ljf-panel .ljf-btn.ljf-danger:hover{background:#b91c1c}
+#ljf-panel .ljf-loghead{font-size:10px;font-weight:800;color:#8a94a0;text-transform:uppercase;
+  letter-spacing:.7px;margin:2px 0 6px;flex-shrink:0}
+#ljf-panel .ljf-log{flex:1;min-height:60px;overflow-y:auto;background:#fff;border:1px solid #e8edf3;
+  border-radius:12px;padding:6px 8px;font-size:11px;line-height:1.5;color:#4b5563}
+#ljf-panel .ljf-log::-webkit-scrollbar{width:8px}
+#ljf-panel .ljf-log::-webkit-scrollbar-thumb{background:#ccd4dd;border-radius:99px}
+#ljf-panel .ljf-log .ljf-l{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:2px 6px;
+  border-radius:6px}
+#ljf-panel .ljf-log .ljf-l:nth-child(even){background:#f8fafc}
+#ljf-panel .ljf-log .ljf-l.info{color:#1a56db}
+#ljf-panel .ljf-log .ljf-l.warn{color:#b45309}
+#ljf-panel .ljf-log .ljf-l.success{color:#047857}
+#ljf-panel .ljf-resume{font-size:11px;font-weight:600;color:#065f46;background:#ecfdf5;border:1px solid #d1fae5;
+  padding:5px 10px;border-radius:99px;margin-bottom:10px;flex-shrink:0}
+#ljf-panel .ljf-note{font-size:11px;color:#9aa4af;margin-top:4px;flex-shrink:0}
+`;
+
+function panelInjectStyle() {
+  if (document.getElementById("ljf-panel-style")) return;
+  const s = document.createElement("style");
+  s.id = "ljf-panel-style";
+  s.textContent = PANEL_CSS;
+  document.head.appendChild(s);
+}
+
+function panelHTML() {
+  return `
+  <div class="ljf-head">
+    <img class="ljf-logo" src="${chrome.runtime.getURL("icons/icon_new.png")}" alt="">
+    <span class="ljf-title">LinkedIn Job Finder</span>
+    <span class="ljf-status" id="ljf-status">Off</span>
+    <button class="ljf-collapse" id="ljf-collapse" title="Collapse panel">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M6 3.5L2.5 8 6 12.5M9.5 3.5L6 8l3.5 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+  </div>
+  <button class="ljf-restore" id="ljf-restore" title="Expand panel">
+    <svg width="18" height="18" viewBox="0 0 16 16" fill="none"><path d="M10 3.5L13.5 8 10 12.5M6.5 3.5L10 8l-3.5 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </button>
+  <div class="ljf-tabs">
+    <button class="ljf-tab active" data-tab="search">Searching</button>
+    <button class="ljf-tab" data-tab="compose">Compose</button>
+  </div>
+  <div class="ljf-tabpane active" id="ljf-tp-search">
+    <div class="ljf-stats">
+      <div class="ljf-stat"><span class="ljf-num" id="ljf-total">0</span><span class="ljf-lbl">Found</span></div>
+      <div class="ljf-stat"><span class="ljf-num" id="ljf-email">0</span><span class="ljf-lbl">Email</span></div>
+      <div class="ljf-stat"><span class="ljf-num" id="ljf-sent">0</span><span class="ljf-lbl">Sent</span></div>
+    </div>
+    <div class="ljf-progress" id="ljf-progress" style="display:none">
+      <div class="ljf-bar"><div class="ljf-fill" id="ljf-progfill"></div></div>
+      <span class="ljf-progtext" id="ljf-progtext">0/0</span>
+    </div>
+    <div class="ljf-field"><label>Search</label>
+      <select id="ljf-mode">
+        <option value="jobs">Jobs</option><option value="posts">Posts</option><option value="both">Both</option>
+      </select>
+    </div>
+    <div class="ljf-field"><label>Speed</label>
+      <select id="ljf-speed">
+        <option value="normal">Normal (random delays)</option>
+        <option value="fast">Fast (reduced delays)</option>
+        <option value="max">Max (no delays)</option>
+      </select>
+    </div>
+    <div class="ljf-checks">
+      <label><input type="checkbox" id="ljf-onlyemail"> Only save with email</label>
+      <label><input type="checkbox" id="ljf-firstpage" checked> First page only</label>
+    </div>
+    <div class="ljf-field"><label>Companies</label>
+      <input id="ljf-companies" placeholder="Google, Microsoft...">
+    </div>
+    <div class="ljf-field"><label>Post Date</label>
+      <select id="ljf-postdate">
+        <option value="all">All filters</option><option value="">Any time</option>
+        <option value="past-24h">Past 24 hours</option><option value="past-week">Past week</option>
+        <option value="past-month">Past month</option>
+      </select>
+    </div>
+    <div class="ljf-actions">
+      <button class="ljf-btn ljf-primary" id="ljf-start">Start</button>
+      <button class="ljf-btn ljf-danger" id="ljf-stop" style="display:none">Stop</button>
+      <button class="ljf-btn" id="ljf-skip" style="display:none">Skip</button>
+      <button class="ljf-btn" id="ljf-pause" style="display:none">Pause</button>
+    </div>
+    <div class="ljf-actions">
+      <button class="ljf-btn" id="ljf-dash" style="flex:1">Dashboard</button>
+    </div>
+    <div class="ljf-loghead">Searching Log</div>
+    <div class="ljf-log" id="ljf-searchlog"></div>
+  </div>
+  <div class="ljf-tabpane" id="ljf-tp-compose">
+    <div class="ljf-field"><label>Speed</label>
+      <select id="ljf-compspeed">
+        <option value="3000">Slow (3s)</option><option value="2000">Medium (2s)</option>
+        <option value="1000" selected>Fast (1s)</option><option value="500">Faster (0.5s)</option>
+        <option value="0">Instant</option>
+      </select>
+    </div>
+    <div class="ljf-checks">
+      <label><input type="checkbox" id="ljf-autosend"> Auto-send</label>
+    </div>
+    <div class="ljf-field" id="ljf-autosend-opts" style="display:none">
+      <select id="ljf-automode" style="flex:1">
+        <option value="realtime">Realtime</option><option value="batch">Batch</option>
+      </select>
+      <input id="ljf-batch" type="number" value="10" min="1" max="100" style="width:52px" title="Batch size">
+    </div>
+    <div class="ljf-resume" id="ljf-resume">Resume: none</div>
+    <div class="ljf-field"><label>Skip</label>
+      <input id="ljf-excluded" placeholder="gmail, proton, yahoo...">
+    </div>
+    <div class="ljf-actions">
+      <button class="ljf-btn ljf-primary" id="ljf-compose" style="flex:1">Compose</button>
+      <button class="ljf-btn ljf-danger" id="ljf-compstop" style="display:none;flex:1">Stop</button>
+    </div>
+    <div class="ljf-loghead">Compose Log</div>
+    <div class="ljf-log" id="ljf-composelog"></div>
+  </div>`;
+}
+
+function panelBuild() {
+  if (_panel && document.body.contains(_panel)) return;
+  panelInjectStyle();
+  _panel = document.createElement("div");
+  _panel.id = "ljf-panel";
+  _panel.innerHTML = panelHTML();
+  document.body.appendChild(_panel);
+  _pRefs = {
+    status: document.getElementById("ljf-status"),
+    total: document.getElementById("ljf-total"),
+    email: document.getElementById("ljf-email"),
+    sent: document.getElementById("ljf-sent"),
+    progress: document.getElementById("ljf-progress"),
+    progfill: document.getElementById("ljf-progfill"),
+    progtext: document.getElementById("ljf-progtext"),
+    mode: document.getElementById("ljf-mode"),
+    speed: document.getElementById("ljf-speed"),
+    onlyemail: document.getElementById("ljf-onlyemail"),
+    firstpage: document.getElementById("ljf-firstpage"),
+    companies: document.getElementById("ljf-companies"),
+    postdate: document.getElementById("ljf-postdate"),
+    start: document.getElementById("ljf-start"),
+    stop: document.getElementById("ljf-stop"),
+    skip: document.getElementById("ljf-skip"),
+    pause: document.getElementById("ljf-pause"),
+    dash: document.getElementById("ljf-dash"),
+    searchlog: document.getElementById("ljf-searchlog"),
+    compspeed: document.getElementById("ljf-compspeed"),
+    autosend: document.getElementById("ljf-autosend"),
+    autosendopts: document.getElementById("ljf-autosend-opts"),
+    automode: document.getElementById("ljf-automode"),
+    batch: document.getElementById("ljf-batch"),
+    resume: document.getElementById("ljf-resume"),
+    excluded: document.getElementById("ljf-excluded"),
+    compose: document.getElementById("ljf-compose"),
+    compstop: document.getElementById("ljf-compstop"),
+    composelog: document.getElementById("ljf-composelog")
+  };
+  document.getElementById("ljf-collapse").addEventListener("click", () => {
+    _panel.classList.add("ljf-hidden");
+  });
+  document.getElementById("ljf-restore").addEventListener("click", () => {
+    _panel.classList.remove("ljf-hidden");
+  });
+  document.querySelectorAll("#ljf-panel .ljf-tab").forEach(tab => {
+    tab.addEventListener("click", () => {
+      document.querySelectorAll("#ljf-panel .ljf-tab").forEach(t => t.classList.toggle("active", t === tab));
+      const name = tab.dataset.tab;
+      document.getElementById("ljf-tp-search").classList.toggle("active", name === "search");
+      document.getElementById("ljf-tp-compose").classList.toggle("active", name === "compose");
+    });
+  });
+  panelWireControls();
+  panelLoadPrefs();
+  panelConnect();
+}
+
+function pLogAdd(container, text, type) {
+  const line = document.createElement("div");
+  line.className = "ljf-l" + (type ? " " + type : "");
+  line.textContent = "[" + new Date().toLocaleTimeString() + "] " + text;
+  container.appendChild(line);
+  while (container.childNodes.length > 250) container.removeChild(container.firstChild);
+  container.scrollTop = container.scrollHeight;
+}
+
+function panelSearchLog(text, type) {
+  if (_panel && _pRefs.searchlog) pLogAdd(_pRefs.searchlog, text, type);
+}
+
+function panelComposeLog(msg) {
+  if (!_panel || !_pRefs.composelog) return;
+  const text = msg.message || msg.text || "";
+  const key = (msg.type || "") + "|" + text;
+  if (key === _pLastCompose) return;
+  _pLastCompose = key;
+  let type = "";
+  if (["info", "start", "wait", "skip"].includes(msg.type)) type = "info";
+  else if (msg.type === "warn" || msg.type === "abort") type = "warn";
+  else if (msg.type === "success" || msg.type === "done") type = "success";
+  pLogAdd(_pRefs.composelog, text, type);
+  if (msg.type === "start") panelSetComposeUI(true);
+  if (msg.type === "abort") { panelSetComposeUI(false); Storage.setComposeState(false); }
+  if (msg.type === "done") {
+    Storage.getStats().then(st => { if (_pRefs.sent) _pRefs.sent.textContent = st.composed || 0; });
+  }
+}
+
+function panelSetSearchUI(searching) {
+  const d = searching ? "block" : "none";
+  _pRefs.start.style.display = searching ? "none" : "block";
+  _pRefs.stop.style.display = d;
+  _pRefs.skip.style.display = d;
+  _pRefs.pause.style.display = d;
+  _pRefs.mode.disabled = searching;
+  if (!searching) {
+    _pRefs.pause.textContent = "Pause";
+  }
+}
+
+function panelSetComposeUI(active) {
+  _pRefs.compose.style.display = active ? "none" : "flex";
+  _pRefs.compstop.style.display = active ? "flex" : "none";
+}
+
+function panelSetState(state, stats) {
+  if (!_panel) return;
+  const searching = state.status === "searching";
+  _pRefs.status.textContent = searching ? "Searching" : "Idle";
+  _pRefs.status.classList.toggle("on", searching);
+  _pRefs.total.textContent = (stats || {}).total || 0;
+  _pRefs.email.textContent = (stats || {}).withEmail || 0;
+  _pRefs.sent.textContent = (stats || {}).composed || 0;
+  panelSetSearchUI(searching);
+  if (searching) {
+    if (state.mode === "posts") _pRefs.mode.value = "posts";
+    else if (state.mode === "both") _pRefs.mode.value = "both";
+    else _pRefs.mode.value = "jobs";
+  }
+}
+
+function panelSetProgress(p) {
+  if (!_panel) return;
+  const total = p.total || 0;
+  if (total > 0) {
+    _pRefs.progress.style.display = "flex";
+    const pct = Math.round((p.completed / total) * 100);
+    _pRefs.progfill.style.width = pct + "%";
+    _pRefs.progtext.textContent = p.completed + "/" + total;
+  } else {
+    _pRefs.progress.style.display = "none";
+  }
+}
+
+function panelHandleControl(msg) {
+  if (msg.type === "paused") {
+    _pRefs.pause.textContent = "Resume";
+    panelSearchLog("Search paused", "warn");
+  } else if (msg.type === "resumed") {
+    _pRefs.pause.textContent = "Pause";
+    panelSearchLog("Search resumed", "info");
+  } else if (msg.type === "skipped") {
+    panelSearchLog("Skip requested - moving to next query", "warn");
+  }
+}
+
+async function panelLoadPrefs() {
+  const prefs = await Storage.getPreferences();
+  _pRefs.mode.value = prefs.searchMode || "jobs";
+  _pRefs.speed.value = prefs.searchSpeed || "normal";
+  _pRefs.onlyemail.checked = prefs.onlyWithEmail === true;
+  _pRefs.firstpage.checked = prefs.jobsFirstPageOnly !== false;
+  _pRefs.companies.value = (prefs.targetCompanies || []).join(", ");
+  _pRefs.postdate.value = prefs.postDateFilter || "";
+  _pRefs.compspeed.value = prefs.composeSpeed != null ? prefs.composeSpeed : 1000;
+  _pRefs.excluded.value = (prefs.excludedEmailDomains || []).join(", ");
+  _pRefs.autosend.checked = prefs.autoSendEnabled === true;
+  _pRefs.automode.value = prefs.autoSendMode || "realtime";
+  _pRefs.batch.value = prefs.batchSize || 10;
+  _pRefs.autosendopts.style.display = prefs.autoSendEnabled ? "flex" : "none";
+  const r = await Storage.getResume();
+  _pRefs.resume.textContent = r ? "Resume: " + r.name : "Resume: none";
+  const st = await Storage.getState();
+  const stats = await Storage.getStats();
+  panelSetState(st, stats);
+  const active = await Storage.getComposeState();
+  panelSetComposeUI(active);
+}
+
+function panelWireControls() {
+  _pRefs.autosend.addEventListener("change", () => {
+    _pRefs.autosendopts.style.display = _pRefs.autosend.checked ? "flex" : "none";
+  });
+
+  _pRefs.start.addEventListener("click", async () => {
+    const prefs = await Storage.getPreferences();
+    prefs.searchMode = _pRefs.mode.value;
+    prefs.onlyWithEmail = _pRefs.onlyemail.checked;
+    prefs.jobsFirstPageOnly = _pRefs.firstpage.checked;
+    prefs.searchSpeed = _pRefs.speed.value;
+    prefs.targetCompanies = _pRefs.companies.value.split(",").map(s => s.trim()).filter(Boolean);
+    prefs.postDateFilter = _pRefs.postdate.value;
+    await Storage.savePreferences(prefs);
+    await Storage.setState({ stopRequested: false });
+    _pRefs.searchlog.innerHTML = '';
+    panelSetProgress({ completed: 0, total: 0 });
+    panelPost({ action: "startSearching", config: prefs });
+  });
+
+  _pRefs.stop.addEventListener("click", () => {
+    panelSearchLog("Stop requested", "warn");
+    panelPost({ action: "stopSearching" });
+  });
+  _pRefs.skip.addEventListener("click", () => {
+    panelSearchLog("Skip requested - moving to next query", "warn");
+    panelPost({ action: "skipQuery" });
+  });
+  _pRefs.pause.addEventListener("click", () => {
+    // Update the button optimistically so the user gets instant feedback even
+    // if the reliability broadcast arrives late or the port just reconnected.
+    const pausing = _pRefs.pause.textContent !== "Resume";
+    _pRefs.pause.textContent = pausing ? "Resume" : "Pause";
+    panelSearchLog(pausing ? "Pausing search..." : "Resuming search...", pausing ? "warn" : "info");
+    panelPost({ action: pausing ? "pauseSearching" : "resumeSearching" });
+  });
+
+  _pRefs.dash.addEventListener("click", () => {
+    // chrome.tabs.create is not available in content scripts, so open the
+    // dashboard from the background instead.
+    panelPost({ action: "openDashboard" });
+  });
+
+  _pRefs.compose.addEventListener("click", async () => {
+    const prefs = await Storage.getPreferences();
+    prefs.composeSpeed = parseInt(_pRefs.compspeed.value) || 0;
+    prefs.excludedEmailDomains = _pRefs.excluded.value.split(",").map(s => s.trim()).filter(Boolean);
+    prefs.autoSendEnabled = _pRefs.autosend.checked;
+    prefs.autoSendMode = _pRefs.automode.value;
+    prefs.batchSize = parseInt(_pRefs.batch.value) || 10;
+    await Storage.savePreferences(prefs);
+    _pRefs.composelog.innerHTML = '';
+    panelPost({ action: "enableComposeMode" });
+  });
+
+  _pRefs.compstop.addEventListener("click", () => panelPost({ action: "disableComposeMode" }));
+}
+
+function panelPost(msg) {
+  if (_pPort) { try { _pPort.postMessage(msg); return; } catch (e) {} }
+  try { chrome.runtime.sendMessage(msg); } catch (e) {}
+}
+
+function panelConnect() {
+  panelDisconnect();
+  try {
+    _pPort = chrome.runtime.connect({ name: "popup" });
+    _pPort.onMessage.addListener(m => {
+      if (m.action === "state") panelSetState(m.state, m.stats);
+      if (m.action === "started") panelSetSearchUI(true);
+      if (m.action === "stopped") { panelSetSearchUI(false); panelSetProgress({ completed: 0, total: 0 }); }
+      if (m.action === "composeProgress") panelComposeLog(m);
+    });
+    _pPort.onDisconnect.addListener(() => {
+      _pPort = null;
+      // background service worker may have restarted; reconnect after a beat
+      if (_panel && document.body.contains(_panel) && _pPrefs.showInPagePanel) setTimeout(panelConnect, 1500);
+    });
+  } catch (e) { _pPort = null; }
+}
+
+function panelDisconnect() {
+  if (_pPort) { try { _pPort.disconnect(); } catch (e) {} _pPort = null; }
+}
+
+function panelHandleIncoming(msg) {
+  if (!msg) return;
+  if (msg.action === "log") panelSearchLog(msg.text || "", "info");
+  if (msg.action === "progress") panelSetProgress(msg);
+}
+
+function panelDestroy() {
+  panelDisconnect();
+  if (_panel) { try { _panel.remove(); } catch (e) {} _panel = null; _pRefs = {}; }
+}
+
+function panelSyncFromPrefs(prefs) {
+  _pPrefs.showInPagePanel = prefs.showInPagePanel === true;
+  _pPrefs.showDebugLogs = prefs.showDebugLogs === true;
+  if (_pPrefs.showInPagePanel) panelBuild();
+  else panelDestroy();
+}
+
+// Debug logging for right-click paste diagnostics. Gated by `showDebugLogs`
+// (toggle in popup, disabled by default) so normal users see nothing.
+function ljfLog(msg) {
+  if (!_pPrefs.showDebugLogs) return;
+  try { panelSearchLog("[dbg] " + msg, ""); } catch (e) {}
+}
+
+/* ====== PASTE TEMPLATE TARGETING ====== */
+
+// LinkedIn renders some flows (connection-note modal, messaging) inside a
+// same-origin iframe hosted by #interop-outlet. Events from that iframe bubble
+// up to the top document on a *copy* of the node (the <iframe> host), so plain
+// document.querySelector misses the real field. Search same-origin iframes too.
+function eachFrameDoc() {
+  const docs = [document];
+  for (const f of Array.from(document.querySelectorAll("iframe, frame"))) {
+    try { if (f.contentDocument && f.contentDocument.body) docs.push(f.contentDocument); } catch (e) {}
+  }
+  return docs;
+}
+// Recurse into open shadow roots (LinkedIn's interop-outlet hosts the connect
+// modal inside a shadow root; document.querySelector cannot see those).
+function queryInFrames(sel, doc = document) {
+  if (!doc) return null;
+  const el = doc.querySelector(sel);
+  if (el) return el;
+  for (const host of doc.querySelectorAll("*")) {
+    if (host.shadowRoot) {
+      const inner = queryInFrames(sel, host.shadowRoot);
+      if (inner) return inner;
+    }
+  }
+  return null;
+}
+function queryAllFrames(sel) {
+  for (const d of eachFrameDoc()) {
+    const hit = queryInFrames(sel, d);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function getEditableTarget() {
+  const isOk = (c) => c && (c.tagName === "TEXTAREA" || (c.tagName === "INPUT" && !["checkbox", "radio", "file", "submit", "button"].includes(c.type)) || c.isContentEditable || c.hasAttribute("contenteditable") || c.getAttribute("role") === "textbox");
+  const resolve = (n) => n && n.isConnected && n.closest ? n.closest("textarea, input, [contenteditable='true'], [contenteditable='plaintext-only'], [role='textbox'], [role='combobox'], form textarea") : null;
+  const candidates = [];
+  if (_manualTarget) {
+    const r = resolve(_manualTarget);
+    if (r) candidates.push(r);
+    const host = _manualTarget.closest && _manualTarget.closest("[data-test-modal], .artdeco-modal, .send-invite, .msg-overlay-conversation-bubble");
+    if (host && host.shadowRoot) {
+      const inner = queryInFrames("textarea, [contenteditable='true'], [role='textbox'], input", host.shadowRoot);
+      if (inner) candidates.push(inner);
+    }
+  }
+  for (const d of eachFrameDoc()) {
+    const ael = d.activeElement;
+    if (ael && ael.isConnected) { const r = resolve(ael); if (r) candidates.push(r); }
+  }
+  return candidates.find(isOk) || null;
+}
+
+// Fallback target locators in case the right-clicked node was re-rendered.
+function findNoteField() {
+  return queryAllFrames('textarea.connect-button-send-invite__custom-message, #custom-message[name="message"], .send-invite textarea, div[role="dialog"][data-test-modal*="send"] textarea');
+}
+function findDmComposer() {
+  return queryAllFrames('.msg-overlay-conversation-bubble [role="textbox"], .msg-form__msg-content-container [role="textbox"], div[role="dialog"] [contenteditable="true"][role="textbox"]');
+}
+
+function readFieldValue(el) {
+  if (!el) return "";
+  try {
+    if (el.tagName === "TEXTAREA" || el.tagName === "INPUT") return el.value || "";
+    return el.textContent || "";
+  } catch (e) { return ""; }
+}
+
+// LinkedIn's connection-note modal is a controlled React textarea inside a
+// shadow root that can re-mount (replace the DOM node) after a synthetic input,
+// wiping the value. So: WAIT for the field to appear, insert, wait a tick for
+// React to flush, then RE-QUERY the live field and verify it actually kept the
+// text. Retry against the fresh node if not.
+async function pasteNoteWithVerify(text) {
+  let el = null;
+  for (let i = 0; i < 10; i++) {
+    el = findNoteField() || getEditableTarget();
+    if (el) break;
+    await new Promise(r => setTimeout(r, 200));
+  }
+  ljfLog("note field found=" + (el ? el.tagName + "." + (el.className || "").toString().split(" ")[0] : "NULL (still not found after wait)"));
+  if (!el) return { ok: false, error: "Connection note field not found on the page." };
+  for (let attempt = 0; attempt < 4 && el; attempt++) {
+    const beforeVal = readFieldValue(el);
+    ljfLog("  attempt " + (attempt + 1) + ": found=" + (el.tagName + "." + (el.className || "").toString().split(" ")[0]) + " before=\"" + beforeVal.slice(0, 40) + "\"");
+    const ins = setEditableText(el, text);
+    ljfLog("  setEditableText returned " + ins);
+    await new Promise(r => setTimeout(r, 250));
+    const fresh = findNoteField() || el;
+    const val = readFieldValue(fresh);
+    ljfLog("  after 250ms value: \"" + val.slice(0, 40) + "\" (len=" + val.length + ")");
+    if (val === text || (val && val.includes(text))) return { ok: true };
+    el = fresh;
+  }
+  const last = findNoteField();
+  return { ok: false, error: "Note was overwritten by LinkedIn's field. Last value: \"" + readFieldValue(last).slice(0, 40) + "\"." };
+}
+
+function setEditableText(editable, text) {
+  if (!editable) return false;
+  const readValue = () => {
+    try {
+      if (editable.tagName === "TEXTAREA" || editable.tagName === "INPUT") return editable.value || "";
+      return editable.textContent || "";
+    } catch (e) { return ""; }
+  };
+  const fireInput = () => {
+    editable.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
+    editable.dispatchEvent(new Event("change", { bubbles: true }));
+    editable.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true }));
+  };
+  try {
+    editable.focus();
+
+    // 1) React-controlled fields (e.g. LinkedIn's connection-note textarea) only
+    //    accept text set through the native prototype setter, then an input
+    //    event. This is the canonical technique; verify it really stuck.
+    if (editable.tagName === "TEXTAREA" || (editable.tagName === "INPUT" && ["text", "", "email", "search"].includes((editable.type || "").toLowerCase()))) {
+      const proto = editable.tagName === "TEXTAREA" ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+      const setter = Object.getOwnPropertyDescriptor(proto, "value");
+      if (setter && setter.set) setter.set.call(editable, text);
+      else editable.value = text;
+      fireInput();
+      if (readValue() === text) return true;
+
+      // 2) Some frameworks reset on 'input'; retry via setRangeText which
+      //    mutates the value directly.
+      try {
+        editable.select();
+        editable.setRangeText(text, editable.selectionStart, editable.selectionEnd, "end");
+        fireInput();
+        if (readValue() === text) return true;
+      } catch (e) {}
+    }
+
+    // 3) Simulate typing via execCommand on the element's OWN document
+    //    (fires native beforeinput/input). Cross-frame safe.
+    try {
+      const edDoc = editable.ownerDocument || document;
+      const edWin = edDoc.defaultView || window;
+      if (edWin !== window) { try { edWin.focus && edWin.focus(); } catch (e) {} editable.focus(); }
+      if (editable.isContentEditable || editable.hasAttribute("contenteditable") || editable.getAttribute("role") === "textbox") {
+        const sel = edWin.getSelection();
+        const range = edDoc.createRange();
+        range.selectNodeContents(editable);
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+      let inserted = false;
+      try { inserted = edDoc.execCommand("insertText", false, text); } catch (e) {}
+      if (inserted !== false) {
+        fireInput();
+        if (readValue() === text || readValue().includes(text)) return true;
+        editable.textContent = text;
+        editable.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
+        return true;
+      }
+      throw new Error("execCommand failed");
+    } catch (e) {}
+
+    // 4) Last resort: raw textContent.
+    editable.textContent = text;
+    editable.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
+    return true;
+  } catch (e) {}
+  return false;
+}
+
+// Attach the stored resume via LinkedIn's message composer file input (reuses
+// the same FileData URL trick as the Gmail flow). Choose the file input nearest
+// to the DM composer; fall back to a visible one.
+async function attachResumeToLinkedInMessage(target) {
+  try {
+    const { resumeFile } = await chrome.storage.local.get("resumeFile");
+    if (!resumeFile) return { ok: false, error: "No resume saved." };
+    let fileInput = null;
+    const root = target ? (target.closest('[role="dialog"], .msg-overlay-conversation-bubble, .msg-form, form') || document) : document;
+    fileInput = root.querySelector('input[type="file"]');
+    if (!fileInput) {
+      const attachBtn = Array.from(root.querySelectorAll('button, [role="button"]')).find(b => /attach|clip|paperclip|\uD83D\uDCCE/i.test(b.getAttribute("aria-label") || b.title || ""));
+      if (attachBtn) {
+        attachBtn.click();
+        await new Promise(r => setTimeout(r, 500));
+        fileInput = root.querySelector('input[type="file"]');
+      }
+    }
+    if (!fileInput) fileInput = document.querySelector('input[type="file"]:not([style*="display: none"], [style*="visibility: hidden"], [aria-hidden="true"])');
+    if (!fileInput) return { ok: false, error: "No file input found on the message composer." };
+
+    const raw = resumeFile.data.includes(",") ? resumeFile.data.split(",")[1] : resumeFile.data;
+    const byteStr = atob(raw);
+    const ab = new ArrayBuffer(byteStr.length);
+    const ia = new Uint8Array(ab);
+    for (let i = 0; i < byteStr.length; i++) ia[i] = byteStr.charCodeAt(i);
+    const blob = new Blob([ab], { type: resumeFile.type || "application/pdf" });
+    const file = new File([blob], resumeFile.name, { type: resumeFile.type || "application/pdf" });
+
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "files");
+    if (nativeSetter && nativeSetter.set) {
+      nativeSetter.set.call(fileInput, dt.files);
+    } else {
+      Object.defineProperty(fileInput, "files", { value: dt.files, configurable: true });
+    }
+    fileInput.dispatchEvent(new Event("change", { bubbles: true }));
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+}
+
 function findUrnInEl(el) {
   if (!el) return "";
   const fromAttr = el.getAttribute("data-urn") || "";
@@ -417,7 +1229,7 @@ async function extractPostUrlWithMenu(el, knownUrn) {
 }
 
 // fix: removed onlyWithEmail filter — posts always saved; dashboard "Without Email" tab handles filtering
-async function scrapePosts(cfg) {
+async function searchPosts(cfg) {
   await waitEl(".feed-shared-update-v2, [data-urn*='activity'], li.reusable-search__result-container, [role='listitem']", 12000);
   await rand(1500, 2500);
   send("log", { text: "Expanding all see-more buttons on page..." });
@@ -436,7 +1248,8 @@ async function scrapePosts(cfg) {
     return [];
   };
 
-  while (!(await checkStop())) {
+  while (!(await checkStop()) && !_skipCurrent && !_abortQuery) {
+    await waitWhilePaused();
     scrollJobs(); await rand(1200, 1800);
     await expandAllOnPage();
     const els = getPosts();
@@ -455,15 +1268,27 @@ async function scrapePosts(cfg) {
           email: (allEmails.emails || []).join(", "), applied: "No", connection_sent: "No", composed: "No",
           notes: "", full_post: pageText.slice(0, 2000), source: "posts"
         };
-        const saved = await Storage.saveJob(basic);
-        if (saved) { found++; send("jobFound", { job: basic }); }
+        stampQuery(basic, "posts");
+        if (basic.email && isDomainExcluded(basic.email, cfg.excludedEmailDomains)) {
+          qcount("excludedDomain"); await bumpDay({ excludedDomain: 1 });
+          send("log", { text: "Skipped (excluded domain): " + basic.email });
+        } else {
+          const saved = await Storage.saveJob(basic);
+          if (saved) {
+            found++; qcount("found");
+            if (basic.email) { qcount("withEmail"); await bumpDay({ found: 1, withEmail: 1 }); }
+            else await bumpDay({ found: 1 });
+            send("jobFound", { job: basic });
+          }
+        }
       }
       break;
     }
 
     let newOnPage = 0;
     for (const el of els) {
-      if (await checkStop()) break;
+      if (await checkStop() || _skipCurrent || _abortQuery) break;
+      await waitWhilePaused();
 
       const urn = el.getAttribute("data-urn") || el.querySelector("a[data-urn]")?.getAttribute("data-urn") || "";
       if (urn && seenIds.has(urn)) continue;
@@ -493,17 +1318,30 @@ async function scrapePosts(cfg) {
       const parsed = LinkedinParser.parsePost(cleanText, meta.profileUrl || poster.poster_profile_url, meta.dateText, "", poster.poster_name);
 
       if (parsed) {
-        if (cfg.onlyWithEmail && !parsed.email) { send("log", { text: "Skipped (no email): " + (poster.poster_name || "unknown") }); }
-        else {
-          Object.assign(parsed, poster);
-          parsed.job_url = postUrl;
-          parsed.source = "posts";
+        Object.assign(parsed, poster);
+        parsed.job_url = postUrl;
+        parsed.source = "posts";
+        stampQuery(parsed, "posts");
+        if (cfg.onlyWithEmail && !parsed.email) {
+          qcount("excludedNoEmail");
+          send("log", { text: "Skipped (no email): " + (poster.poster_name || "unknown") });
+        } else if (parsed.email && isDomainExcluded(parsed.email, cfg.excludedEmailDomains)) {
+          qcount("excludedDomain"); await bumpDay({ excludedDomain: 1 });
+          send("log", { text: "Skipped (excluded domain): " + parsed.email });
+        } else {
           const saved = await Storage.saveJob(parsed);
-          if (saved) { found++; newOnPage++; send("jobFound", { job: parsed }); }
+          if (saved) {
+            found++; newOnPage++; qcount("found");
+            if (parsed.email) { qcount("withEmail"); await bumpDay({ found: 1, withEmail: 1 }); }
+            else await bumpDay({ found: 1 });
+            send("jobFound", { job: parsed });
+          } else qcount("excludedDupe");
         }
       } else {
-        if (cfg.onlyWithEmail) { send("log", { text: "Skipped (no email): " + (poster.poster_name || "unknown") }); }
-        else {
+        if (cfg.onlyWithEmail) {
+          qcount("excludedNoEmail");
+          send("log", { text: "Skipped (no email): " + (poster.poster_name || "unknown") });
+        } else {
           const basic = {
             job_id: "post_" + (postUrl.replace(/[^a-zA-Z0-9]/g, "").slice(-20) || cleanText.slice(0, 20).replace(/\s+/g, "_")),
             date_found: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }),
@@ -512,8 +1350,13 @@ async function scrapePosts(cfg) {
             poster_profile_url: poster.poster_profile_url || "", job_url: postUrl,
             email: "", applied: "No", connection_sent: "No", composed: "No", notes: "", full_post: cleanText.slice(0, 2000), source: "posts"
           };
+          stampQuery(basic, "posts");
           const saved = await Storage.saveJob(basic);
-          if (saved) { found++; newOnPage++; send("jobFound", { job: basic }); send("log", { text: "Saved (no email): " + (poster.poster_name || "unknown poster") }); }
+          if (saved) {
+            found++; newOnPage++; qcount("found"); await bumpDay({ found: 1 });
+            send("jobFound", { job: basic });
+            send("log", { text: "Saved (no email): " + (poster.poster_name || "unknown poster") });
+          } else qcount("excludedDupe");
         }
       }
       await rand(500, 1200);
@@ -538,49 +1381,133 @@ function buildPhaseQueries(cfg, phase) {
   const qs = [];
   const companies = cfg.targetCompanies || [];
   if (phase === "posts") {
+    // "all" runs every date filter one by one; otherwise single filter
+    const filterValues = cfg.postDateFilter === "all"
+      ? ["", "past-24h", "past-week", "past-month"]
+      : [cfg.postDateFilter || ""];
+    const filterLabels = { "": "Any time", "past-24h": "Past 24h", "past-week": "Past week", "past-month": "Past month" };
+    const locs = cfg.locationsEnabled !== false ? (cfg.locations || []) : [];
+    const locPart = locs.length ? ' AND "' + locs.join('" AND "') + '"' : "";
+    const locLabel = locs.length ? " @ " + locs.join(", ") : "";
+    const useCompanies = cfg.targetCompaniesEnabled !== false && companies.length > 0;
     for (const role of cfg.jobRoles || []) {
-      if (companies.length) {
+      const roleBase = '"Hiring" AND "' + role + '"' + locPart;
+      if (useCompanies) {
         for (const company of companies) {
-          qs.push({ keyword: role, location: "", label: "Posts: " + role + " @ " + company, query: '"Hiring" AND "' + role + '" AND "' + company + '"', _posts: true });
+          for (const fv of filterValues) {
+            qs.push({ keyword: role, location: locs.join(", "), label: "Posts: " + role + locLabel + " @ " + company + " [" + (filterLabels[fv] || "Any time") + "]", query: roleBase + ' AND "' + company + '"', _posts: true, dateFilter: fv, _id: "posts|" + role + "|" + locs.join(",") + "|" + company + "|" + fv });
+          }
         }
       } else {
-        qs.push({ keyword: role, location: "", label: "Posts: " + role, query: '"Hiring" AND "' + role + '"', _posts: true });
+        for (const fv of filterValues) {
+          qs.push({ keyword: role, location: locs.join(", "), label: "Posts: " + role + locLabel + " [" + (filterLabels[fv] || "Any time") + "]", query: roleBase, _posts: true, dateFilter: fv, _id: "posts|" + role + "|" + locs.join(",") + "||" + fv });
+        }
       }
     }
   } else {
     for (const role of cfg.jobRoles || []) {
-      if ((cfg.locations || []).length) { for (const loc of cfg.locations) qs.push({ keyword: role, location: loc, label: "Jobs: " + role + " @ " + loc, _posts: false }); }
-      else { qs.push({ keyword: role, location: "", label: "Jobs: " + role, _posts: false }); }
+      if ((cfg.locations || []).length) { for (const loc of cfg.locations) qs.push({ keyword: role, location: loc, label: "Jobs: " + role + " @ " + loc, _posts: false, _id: "jobs|" + role + "|" + loc }); }
+      else { qs.push({ keyword: role, location: "", label: "Jobs: " + role, _posts: false, _id: "jobs|" + role + "|" }); }
     }
   }
-  return qs;
+  // Disabled queries are dropped here so runPhase and the runAll progress total
+  // always see the same list. _disabledQueries is loaded once per run in runAll.
+  return _disabledQueries.length ? qs.filter(q => _disabledQueries.indexOf(q.label) === -1) : qs;
+}
+
+// Persist the per-query aggregate once per query execution. Called on success,
+// skip, and navigation failure so a query is never recorded twice.
+async function flushQueryStat(extra) {
+  const delta = _qdelta;
+  _qdelta = null;
+  _qctx = null;
+  if (delta) {
+    if (extra) Object.keys(extra).forEach(k => { delta[k] = (delta[k] || 0) + extra[k]; });
+    try { await Storage.addQueryStat(delta); } catch (e) {}
+  }
 }
 
 // fix: returns false on navigation failure (waitEl timeout) so runAll returns early
-// and activeScrapeConfig is preserved for resumption on page reload
+// and activeSearchConfig is preserved for resumption on page reload
 async function runPhase(cfg, phase, startIdx) {
   const queries = buildPhaseQueries(cfg, phase);
-  const scraper = phase === "posts" ? scrapePosts : scrapeJobs;
+  const searcher = phase === "posts" ? searchPosts : searchJobs;
   const waitSel = phase === "posts"
     ? ".feed-shared-update-v2, li.reusable-search__result-container, [role='listitem']"
     : "[data-job-id], .jobs-search-results-list";
 
   for (let i = startIdx; i < queries.length && !(await checkStop()); i++) {
+    await waitWhilePaused();
     const q = queries[i];
-    const url = q._posts ? postsUrl(q.query) : jobsUrl(q.keyword, q.location, cfg);
+    _abortQuery = false;
+    _qctx = { label: q.label, id: q._id, phase, keyword: q.keyword, location: q.location };
+    _qdelta = {
+      id: q._id, label: q.label, phase, keyword: q.keyword, location: q.location,
+      runs: 0, found: 0, withEmail: 0,
+      excludedNoEmail: 0, excludedCompany: 0, excludedDupe: 0, excludedDomain: 0,
+      skipped: 0, failed: 0, completeRuns: 0, interrupted: 0
+    };
+    if (_skipCurrent) {
+      _skipCurrent = false;
+      send("log", { text: "Skipped: " + q.label });
+      await flushQueryStat({ skipped: 1 });
+      _progress.completed++;
+      broadcastProgress();
+      continue;
+    }
+    const url = q._posts ? postsUrl(q.query, q.dateFilter !== undefined ? q.dateFilter : cfg.postDateFilter) : jobsUrl(q.keyword, q.location, cfg);
 
-    await chrome.storage.local.set({ activeScrapeConfig: { phase, idx: i, url, config: cfg } });
+    await chrome.storage.local.set({ activeSearchConfig: { phase, idx: i, url, config: cfg } });
     send("log", { text: "=== " + q.label + " ===" });
 
-    if (!isOnCorrectPage(url)) {
-      window.location.href = url;
-      const loaded = await waitEl(waitSel, 15000);
-      if (!loaded) { send("log", { text: "Navigation failed, aborting phase" }); return false; }
-      await rand(2000, 3000);
-    }
+    // race the whole query (navigation + search) against an instant skip signal
+    const skipPromise = new Promise(res => { _skipResolve = res; });
+    const runQuery = (async () => {
+      if (!isOnCorrectPage(url)) {
+        window.location.href = url;
+        const loaded = await waitEl(waitSel, 15000);
+        if (!loaded) return { failed: true };
+        await rand(2000, 3000);
+      }
+      // only count a "run" once the searcher actually executes (not pre-skips/nav failures)
+      if (_qdelta) _qdelta.runs = 1;
+      await bumpDay({ runs: 1 });
+      return { found: await searcher(cfg) };
+    })();
+    const rq = await Promise.race([runQuery, skipPromise.then(() => ({ skipped: true }))]);
+    _skipResolve = null;
 
-    const found = await scraper(cfg);
-    send("log", { text: "=== Complete: " + found + " items ===" });
+    if (rq.skipped) {
+      send("log", { text: "Skipped by user: " + q.label });
+      // A started-but-skipped run is an INTERRUPTED attempt, not a completed run.
+      // It still gets recorded for the dead-query analytics but never counts as a
+      // full run there (dead-query disabling only trusts fully-completed runs).
+      if (_qdelta && _qdelta.runs) _qdelta.interrupted = 1;
+      await flushQueryStat({ skipped: 1 });
+      _progress.completed++;
+      broadcastProgress();
+      const nq = queries[i + 1];
+      if (nq) {
+        const nurl = nq._posts ? postsUrl(nq.query, nq.dateFilter !== undefined ? nq.dateFilter : cfg.postDateFilter) : jobsUrl(nq.keyword, nq.location, cfg);
+        await chrome.storage.local.set({ activeSearchConfig: { phase, idx: i + 1, url: nurl, config: cfg } });
+      }
+      continue;
+    }
+    if (rq.failed) {
+      send("log", { text: "Navigation failed, aborting phase" });
+      await flushQueryStat({ failed: 1 });
+      return false;
+    }
+    if (_skipCurrent) _skipCurrent = false;
+    // A stop/abort that lands mid-query makes the searcher return early: the run
+    // was INTERRUPTED, so it must not count as a fully-completed run for the
+    // dead-query decision (charts still use the separate daily counters).
+    const interruptedRun = shouldStop || _abortQuery;
+    send("log", { text: (interruptedRun ? "=== Interrupted: " : "=== Complete: ") + rq.found + " items ===" });
+    if (_qdelta) { if (interruptedRun) _qdelta.interrupted = 1; else _qdelta.completeRuns = 1; }
+    await flushQueryStat();
+    _progress.completed++;
+    broadcastProgress();
   }
   return true;
 }
@@ -589,21 +1516,37 @@ async function runPhase(cfg, phase, startIdx) {
 // doesn't immediately abort a fresh start
 async function runAll(cfg) {
   shouldStop = false;
-  const speed = cfg.scrapeSpeed || "normal";
+  _skipCurrent = false;
+  _abortQuery = false;
+  _qctx = null;
+  _qdelta = null;
+  try { _disabledQueries = await Storage.getDisabledQueries(); } catch (e) { _disabledQueries = []; }
+  await chrome.storage.local.set({ searchPaused: false });
+  const speed = cfg.searchSpeed || "normal";
   if (speed === "fast") _speedFactor = 0.35;
   else if (speed === "max") _speedFactor = 0;
   else _speedFactor = 1;
   const mode = cfg.searchMode || "jobs";
-  await Storage.setState({ status: "scraping", mode, totalFound: 0, stopRequested: false });
+  await Storage.setState({ status: "searching", mode, totalFound: 0, stopRequested: false });
 
-  if (await checkStop()) { await chrome.storage.local.remove("activeScrapeConfig"); return; }
+  if (await checkStop()) { await chrome.storage.local.remove("activeSearchConfig"); return; }
 
   const phases = mode === "both" ? ["jobs", "posts"] : [mode === "posts" ? "posts" : "jobs"];
 
-  const saved = await chrome.storage.local.get("activeScrapeConfig");
-  let sc = saved.activeScrapeConfig;
+  const phaseCounts = phases.map(p => buildPhaseQueries(cfg, p).length);
+  _progress.total = phaseCounts.reduce((a, b) => a + b, 0);
+  _progress.completed = 0;
+
+  const saved = await chrome.storage.local.get("activeSearchConfig");
+  let sc = saved.activeSearchConfig;
   let phaseStart = sc ? phases.indexOf(sc.phase) : 0;
   if (phaseStart < 0) phaseStart = 0;
+
+  if (sc && phases.includes(sc.phase)) {
+    for (let i = 0; i < phases.indexOf(sc.phase); i++) _progress.completed += phaseCounts[i];
+    _progress.completed += (sc.idx || 0);
+  }
+  broadcastProgress();
 
   for (let p = phaseStart; p < phases.length && !(await checkStop()); p++) {
     const phase = phases[p];
@@ -613,35 +1556,93 @@ async function runAll(cfg) {
     sc = null;
   }
 
-  await chrome.storage.local.remove("activeScrapeConfig");
+  await chrome.storage.local.remove("activeSearchConfig");
   await Storage.setState({ status: "idle", mode, totalFound: 0, stopRequested: false });
   shouldStop = false;
-  send("scrapingComplete", {});
+  _progress.completed = _progress.total;
+  broadcastProgress();
+  send("searchingComplete", {});
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg.action === "startScraping") {
+  // Route extension-wide broadcasts into the in-page panel (same messages the
+  // popup/dashboard listen to). Local search logs/progress come via send().
+  try {
+    if (msg && msg.action && ["composeLog", "statsUpdate", "searchControl", "searchingComplete", "log", "progress", "state"].includes(msg.action)) {
+      if (msg.action === "composeLog") panelComposeLog(msg);
+      else if (msg.action === "statsUpdate") { if (_pRefs.total) { _pRefs.total.textContent = msg.stats.total; _pRefs.email.textContent = msg.stats.withEmail; _pRefs.sent.textContent = msg.stats.composed; } }
+      else if (msg.action === "searchControl") panelHandleControl(msg);
+      else if (msg.action === "searchingComplete") { panelSetSearchUI(false); panelSetProgress({ completed: 0, total: 0 }); }
+      else if (msg.action === "log") panelSearchLog(msg.text || "", "info");
+      else if (msg.action === "progress") panelSetProgress(msg);
+      else if (msg.action === "state") panelSetState(msg.state, msg.stats);
+    }
+  } catch (e) {}
+  if (msg.action === "startSearching") {
     sendResponse({ ok: true });
     shouldStop = false;
-    // clear stale activeScrapeConfig so fresh start never resumes an old session
-    chrome.storage.local.remove("activeScrapeConfig").then(() =>
+    bumpDay({ searches: 1 });
+    // clear stale activeSearchConfig so fresh start never resumes an old session
+    chrome.storage.local.remove("activeSearchConfig").then(() =>
       runAll(msg.config || {}).catch(e => send("log", { text: "Error: " + e.message }))
     );
     return true;
   }
-  if (msg.action === "stopScraping") { sendResponse({ ok: true }); shouldStop = true; Storage.setState({ stopRequested: true }); }
+  if (msg.action === "stopSearching") {
+    sendResponse({ ok: true });
+    shouldStop = true;
+    // Preserve mode/stats: setState replaces, so merge with current state to
+    // avoid wiping status/mode while the run winds down.
+    Storage.getState().then(s => Storage.setState({ ...(s || {}), status: "idle", stopRequested: true }));
+  }
+  if (msg.action === "skipQuery") { sendResponse({ ok: true }); triggerSkip(); }
+  if (msg.action === "pauseSearching") { sendResponse({ ok: true }); chrome.storage.local.set({ searchPaused: true }); }
+  if (msg.action === "resumeSearching") { sendResponse({ ok: true }); chrome.storage.local.set({ searchPaused: false }); }
+  if (msg.action === "getContextMenuInfo") { sendResponse({ context: _manualContext || {} }); }
+  if (msg.action === "devLog") { ljfLog(msg.text || msg.message || ""); sendResponse({ ok: true }); }
+  if (msg.action === "pasteConnectionNote") {
+    const text = (msg.data && msg.data.text || "").slice(0, 200);
+    ljfLog("BG -> pasteConnectionNote, template len=" + text.length);
+    pasteNoteWithVerify(text).then(res => {
+      ljfLog("BG result: " + JSON.stringify(res));
+      sendResponse(res);
+    });
+    return true;
+  }
+  if (msg.action === "pasteLinkedInDm") {
+    let target = findDmComposer() || getEditableTarget();
+    ljfLog("BG -> pasteLinkedInDm, target=" + (target ? target.tagName : "NULL"));
+    if (!target) { sendResponse({ ok: false, error: "No message box under the cursor." }); return true; }
+    const text = (msg.data && msg.data.text || "");
+    const ok = setEditableText(target, text);
+    attachResumeToLinkedInMessage(target).then(att => {
+      ljfLog("DM result ok=" + ok + " attach=" + JSON.stringify(att));
+      sendResponse({ ok, error: ok ? (att.ok ? null : att.error) : "Could not insert into the message box." });
+    });
+    return true;
+  }
   if (msg.action === "ping") { sendResponse({ ok: true }); }
 });
 
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "sync" && changes.preferences) {
+    const p = { ...(changes.preferences.newValue || {}) };
+    panelSyncFromPrefs(p);
+  }
+});
+
 (async function init() {
-  const saved = await chrome.storage.local.get("activeScrapeConfig");
-  const sc = saved.activeScrapeConfig;
+  const prefs = await Storage.getPreferences();
+  panelSyncFromPrefs(prefs);
+  try { panelSearchLog("Panel ready. LJF content script active on: " + location.pathname); } catch (e) {}
+  const saved = await chrome.storage.local.get("activeSearchConfig");
+  const sc = saved.activeSearchConfig;
   if (!sc || !sc.config) return;
-  if (await checkStop()) { await chrome.storage.local.remove("activeScrapeConfig"); await Storage.setState({ stopRequested: false, status: "idle" }); return; }
+  if (await checkStop()) { await chrome.storage.local.remove("activeSearchConfig"); await Storage.setState({ stopRequested: false, status: "idle" }); return; }
   const isOnSearch = window.location.href.includes("/jobs/search") || window.location.href.includes("/search/results/content");
   if (isOnSearch) {
     await rand(500, 1000);
-    send("log", { text: "Resuming scrape session..." });
+    send("log", { text: "Resuming search session..." });
     await runAll(sc.config);
   }
 })();
