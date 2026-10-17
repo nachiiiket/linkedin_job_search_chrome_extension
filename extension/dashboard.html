@@ -155,40 +155,140 @@
     <button id="btnExpandSidebar" class="sidebar-expand-btn" title="Show preferences">▶</button>
 
     <main class="main-content">
-      <div class="results-header">
-        <div class="stats-bar">
-          <div class="stat"><span id="dashTotal" class="stat-number">0</span> Total</div>
-          <div class="stat"><span id="dashWithEmail" class="stat-number">0</span> With Email</div>
-          <div class="stat"><span id="dashApplied" class="stat-number">0</span> Applied</div>
-          <div class="stat"><span id="dashConnected" class="stat-number">0</span> Connected</div>
-          <div class="stat"><span id="dashComposed" class="stat-number">0</span> Composed</div>
+      <div class="view-switcher">
+        <button id="viewResults" class="vs-btn active" type="button">Results</button>
+        <button id="viewAnalytics" class="vs-btn" type="button">Analytics</button>
+      </div>
+
+      <div id="resultsView">
+        <div class="results-header">
+          <div class="stats-bar">
+            <div class="stat"><span id="dashTotal" class="stat-number">0</span> Total</div>
+            <div class="stat"><span id="dashWithEmail" class="stat-number">0</span> With Email</div>
+            <div class="stat"><span id="dashApplied" class="stat-number">0</span> Applied</div>
+            <div class="stat"><span id="dashConnected" class="stat-number">0</span> Connected</div>
+            <div class="stat"><span id="dashComposed" class="stat-number">0</span> Composed</div>
+          </div>
+          <div class="progress-row" id="searchProgressRow" style="display:none">
+            <div class="progress-track"><div id="searchProgressBar" class="progress-fill" style="width:0%"></div></div>
+            <span id="searchProgressText" class="progress-text">0/0</span>
+          </div>
+          <div class="tabs" id="resultsTabs">
+            <button id="tabAll" class="tab active">All</button>
+            <button id="tabWithEmail" class="tab">With Email</button>
+            <button id="tabWithoutEmail" class="tab">Without Email</button>
+            <button id="tabManual" class="tab">Manual Sends</button>
+          </div>
         </div>
-        <div class="progress-row" id="searchProgressRow" style="display:none">
-          <div class="progress-track"><div id="searchProgressBar" class="progress-fill" style="width:0%"></div></div>
-          <span id="searchProgressText" class="progress-text">0/0</span>
+        <div class="table-wrapper" id="jobsTableWrap">
+          <table class="jobs-table"><thead><tr><th>Position</th><th>Company</th><th>Location</th><th>Poster</th><th>Email</th><th>Cmp</th><th>Post/Job URL</th><th>Profile</th><th>Date</th></tr></thead>
+          <tbody id="jobsBody"></tbody></table>
         </div>
-        <div class="tabs">
-          <button id="tabAll" class="tab active">All</button>
-          <button id="tabWithEmail" class="tab">With Email</button>
-          <button id="tabWithoutEmail" class="tab">Without Email</button>
-          <button id="tabManual" class="tab">Manual Sends</button>
+        <div class="table-wrapper" id="manualSection" style="display:none">
+          <table class="jobs-table"><thead><tr><th>Email</th><th>Recruiter</th><th>Company / Role</th><th>Post Link</th><th>Sent At</th><th>Status</th></tr></thead>
+          <tbody id="manualBody"></tbody></table>
+          <p id="manualEmptyMsg" class="empty-msg">No right-click emails sent yet.</p>
+        </div>
+        <p id="emptyMsg" class="empty-msg">No jobs tracked yet.</p>
+      </div>
+
+      <div id="analyticsView" style="display:none">
+        <div class="analytics-toolbar">
+          <div class="range-toggle">
+            <button class="range-btn" data-range="day" type="button">Day</button>
+            <button class="range-btn active" data-range="week" type="button">Week</button>
+            <button class="range-btn" data-range="month" type="button">Month</button>
+            <button class="range-btn" data-range="year" type="button">Year</button>
+            <button class="range-btn" data-range="all" type="button">All</button>
+          </div>
+          <div class="analytics-actions">
+            <label class="chk-label"><input type="checkbox" id="autoDisableDead"> Auto-disable dead queries</label>
+            <label class="chk-label" title="Only fully-completed runs count toward this threshold; interrupted runs are tracked but never counted as complete.">Dead after <input type="number" id="deadQueryRuns" value="3" min="1" max="50" class="num-input"> runs</label>
+            <button id="btnRefreshAnalytics" class="btn btn-outline btn-xs" type="button">Refresh</button>
+            <button id="btnClearAnalytics" class="btn btn-outline btn-xs" type="button">Reset analytics</button>
+          </div>
+        </div>
+
+        <div class="kpi-grid">
+          <div class="kpi-card"><div class="kpi-value" id="kpiTotal">0</div><div class="kpi-label">Tracked</div></div>
+          <div class="kpi-card"><div class="kpi-value" id="kpiEmail">0</div><div class="kpi-label">With Email</div></div>
+          <div class="kpi-card"><div class="kpi-value" id="kpiComposed">0</div><div class="kpi-label">Composed</div></div>
+          <div class="kpi-card"><div class="kpi-value" id="kpiExcluded">0</div><div class="kpi-label">Excluded</div></div>
+          <div class="kpi-card"><div class="kpi-value" id="kpiQueries">0</div><div class="kpi-label">Queries</div></div>
+          <div class="kpi-card"><div class="kpi-value" id="kpiExec">0</div><div class="kpi-label">Query Runs</div></div>
+          <div class="kpi-card"><div class="kpi-value" id="kpiSearches">0</div><div class="kpi-label">Searches</div></div>
+          <div class="kpi-card"><div class="kpi-value" id="kpiYield">0</div><div class="kpi-label">Avg / Query</div></div>
+        </div>
+
+        <div class="chart-grid">
+          <div class="chart-card wide">
+            <div class="chart-title">Emails found vs excluded over time</div>
+            <div id="chartTimeSeries" class="chart-box"></div>
+            <div id="peakInsights"></div>
+            <div id="peakCaption" class="peak-caption"></div>
+          </div>
+          <div class="chart-card">
+            <div class="chart-title">Top queries by results</div>
+            <div id="chartPerQuery" class="chart-box short"></div>
+          </div>
+        </div>
+
+        <div class="chart-grid">
+          <div class="chart-card">
+            <div class="chart-title">Best day of week <span class="chart-hint">Emails by weekday — which day pays off</span></div>
+            <div id="chartWeekday" class="chart-box short"></div>
+            <div id="weekdayCaption" class="peak-caption"></div>
+          </div>
+          <div class="chart-card">
+            <div class="chart-title">Best time of day <span class="chart-hint">Emails by hour block (IST)</span></div>
+            <div id="chartHour" class="chart-box short"></div>
+            <div id="hourCaption" class="peak-caption"></div>
+          </div>
+        </div>
+
+        <div class="chart-card">
+          <div class="chart-title">Query performance
+            <span class="chart-hint">Toggle a query off to skip it on the next run</span>
+          </div>
+          <div class="table-wrapper">
+            <table class="jobs-table query-table">
+              <thead><tr><th>Query</th><th>Phase</th><th>Runs</th><th>Found</th><th>Email</th><th>Excluded</th><th>Yield</th><th>Flag</th><th>Last run</th><th>Enabled</th></tr></thead>
+              <tbody id="queryStatsBody"></tbody>
+            </table>
+          </div>
+          <p id="queryStatsEmpty" class="empty-msg">No queries run yet.</p>
+        </div>
+
+        <div class="chart-card">
+          <div class="chart-title">Hiring word scanner <span class="chart-hint">Top words &amp; phrases from saved posts</span></div>
+          <div class="word-toolbar">
+            <div class="range-toggle">
+              <button class="word-range-btn active" data-scope="all" type="button">All posts</button>
+              <button class="word-range-btn" data-scope="email" type="button">With email</button>
+            </div>
+            <label class="chk-label"><input type="checkbox" id="wordUnigrams" checked> Words</label>
+            <label class="chk-label"><input type="checkbox" id="wordBigrams" checked> Phrases</label>
+            <label class="chk-label">Top <input type="number" id="wordTopN" value="20" min="5" max="100" class="num-input"></label>
+            <label class="chk-label">Min count <input type="number" id="wordMinCount" value="2" min="1" max="50" class="num-input"></label>
+          </div>
+          <div class="words-grid">
+            <div>
+              <div class="chart-title small">Top words</div>
+              <div id="wordList" class="words-list"></div>
+            </div>
+            <div>
+              <div class="chart-title small">Top phrases</div>
+              <div id="bigramList" class="words-list"></div>
+            </div>
+          </div>
         </div>
       </div>
-      <div class="table-wrapper" id="jobsTableWrap">
-        <table class="jobs-table"><thead><tr><th>Position</th><th>Company</th><th>Location</th><th>Poster</th><th>Email</th><th>Cmp</th><th>Post/Job URL</th><th>Profile</th><th>Date</th></tr></thead>
-        <tbody id="jobsBody"></tbody></table>
-      </div>
-      <div class="table-wrapper" id="manualSection" style="display:none">
-        <table class="jobs-table"><thead><tr><th>Email</th><th>Recruiter</th><th>Company / Role</th><th>Post Link</th><th>Sent At</th><th>Status</th></tr></thead>
-        <tbody id="manualBody"></tbody></table>
-        <p id="manualEmptyMsg" class="empty-msg">No right-click emails sent yet.</p>
-      </div>
-      <p id="emptyMsg" class="empty-msg">No jobs tracked yet.</p>
     </main>
   </div>
 </div>
 <script src="utils/storage.js"></script>
 <script src="utils/exporter.js"></script>
+<script src="analytics.js"></script>
 <script src="dashboard.js"></script>
 </body>
 </html>

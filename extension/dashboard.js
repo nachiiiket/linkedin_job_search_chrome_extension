@@ -1,4 +1,4 @@
-let port = null, allJobs = [], currentFilter = "all", manualEmails = [];
+let port = null, allJobs = [], currentFilter = "all", manualEmails = [], _prefsMirror = null;
 function connect() {
   if (port) { try { port.disconnect(); } catch (e) {} }
   const p = chrome.runtime.connect({ name: "dashboard" });
@@ -17,8 +17,9 @@ function send(msg) {
 
 function handle(msg) {
   if (msg.action === "state") updateState(msg.state, msg.stats);
-  if (msg.action === "jobs") { allJobs = msg.jobs; renderJobs(allJobs); }
+  if (msg.action === "jobs") { allJobs = msg.jobs; renderJobs(allJobs); Analytics.setJobs(); }
   if (msg.action === "preferences") {
+    _prefsMirror = msg.prefs;
     populateForm(msg.prefs);
     switchSidebarPane(msg.prefs.searchMode === "posts" ? "Posts" : "Jobs");
   }
@@ -29,17 +30,21 @@ function handle(msg) {
     });
     send({ action: "getPreferences" });
   }
-  if (msg.action === "cleared") { allJobs = []; renderJobs([]); updateState({ status: "idle" }, { total: 0, applied: 0, connected: 0 }); }
+  if (msg.action === "cleared") { allJobs = []; renderJobs([]); updateState({ status: "idle" }, { total: 0, applied: 0, connected: 0 }); Analytics.setJobs(); }
   if (msg.action === "composeProgress") handleComposeProgress(msg);
 }
 
 function updateState(state, stats) {
   const s = state.status === "searching";
-  ["btnStart", "btnStop", "btnSkip", "btnPause"].forEach(id => {
+  ["btnStop", "btnSkip", "btnPause"].forEach(id => {
     const el = document.getElementById(id);
-    if (!el) return;
-    if (id === "btnStart") el.style.display = "none";
-    else el.style.display = s ? "inline-block" : "none";
+    if (el) el.style.display = s ? "inline-block" : "none";
+  });
+  // Dashboard start buttons are hidden while a search runs so a second run
+  // cannot be started from the same page.
+  ["btnStartJobs", "btnStartPosts"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) { el.disabled = s; el.style.opacity = s ? "0.6" : ""; }
   });
   if (!s) {
     const btn = document.getElementById("btnPause");
@@ -118,6 +123,8 @@ function getPrefs(section) {
     batchSize: parseInt(document.getElementById("batchSize").value) || 10,
     sendMinDelay: parseInt(document.getElementById("sendMinDelay").value) || 1000,
     sendMaxDelay: parseInt(document.getElementById("sendMaxDelay").value) || 3000,
+    showInPagePanel: _prefsMirror ? _prefsMirror.showInPagePanel === true : false,
+    showDebugLogs: _prefsMirror ? _prefsMirror.showDebugLogs === true : false,
   };
   return p;
 }
@@ -163,7 +170,7 @@ function switchSidebarPane(pane) {
 }
 
 function switchTab(tab) {
-  document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+  document.querySelectorAll("#resultsTabs .tab").forEach(t => t.classList.remove("active"));
   document.getElementById(tab).classList.add("active");
   currentFilter = tab === "tabAll" ? "all" : tab === "tabWithEmail" ? "withEmail" : tab === "tabWithoutEmail" ? "withoutEmail" : "manual";
   const isManual = currentFilter === "manual";
@@ -220,6 +227,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   renderJobs(jobs);
   manualEmails = await Storage.getManualEmails();
   renderManualEmails();
+  try { await Storage.migrateFoundAt(); } catch (e) {}
+  Analytics.init();
   send({ action: "getPreferences" });
   const ca = await Storage.getComposeState();
   if (ca) { document.getElementById("btnComposeInGmail").style.display = "none"; document.getElementById("btnAbortCompose").style.display = "inline-block"; }
@@ -403,7 +412,7 @@ chrome.runtime.onMessage.addListener((msg) => {
     if (msg.state) { updateState(msg.state, msg.stats); if (msg.state.status === "idle") handleSearchProgress({ completed: 0, total: 0 }); }
   }
   if (msg.action === "progress") handleSearchProgress(msg);
-  if (msg.action === "searchingComplete") handleSearchProgress({ completed: 0, total: 0 });
+  if (msg.action === "searchingComplete") { handleSearchProgress({ completed: 0, total: 0 }); Analytics.setJobs(); }
   if (msg.action === "manualEmailsUpdated") {
     Storage.getManualEmails().then(m => { manualEmails = m; renderManualEmails(); });
   }

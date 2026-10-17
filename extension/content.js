@@ -3,15 +3,49 @@ let _speedFactor = 1;
 const _progress = { completed: 0, total: 0 };
 let _skipCurrent = false;
 let _skipResolve = null;
+let _abortQuery = false;
+let _qctx = null;
+let _qdelta = null;
+let _disabledQueries = [];
 
 function triggerSkip() {
   _skipCurrent = true;
+  // Break the in-flight searcher too, otherwise a "skipped" query keeps saving
+  // results while the next query's navigation interrupts it mid-flight.
+  _abortQuery = true;
   if (_skipResolve) {
     const r = _skipResolve;
     _skipResolve = null;
     _skipCurrent = false;
     r();
   }
+}
+
+function qcount(field, n) {
+  if (_qdelta && typeof _qdelta[field] === "number") _qdelta[field] += (n == null ? 1 : n);
+}
+
+function todayIst() {
+  const d = toIstDate(new Date());
+  return d ? d.toISOString().slice(0, 10) : "";
+}
+
+async function bumpDay(fields) {
+  try { await Storage.bumpDailyStat(todayIst(), fields); } catch (e) {}
+}
+
+function stampQuery(d, phase) {
+  if (!d) return d;
+  if (!d.found_at) d.found_at = new Date().toISOString();
+  d.phase = phase;
+  d.query_label = _qctx ? _qctx.label : (d.query_label || "");
+  return d;
+}
+
+function isDomainExcluded(email, domains) {
+  if (!email || !domains || !domains.length) return false;
+  const e = String(email).toLowerCase();
+  return domains.some(d => { const s = String(d || "").toLowerCase().trim(); return s && e.includes(s); });
 }
 
 function broadcastProgress() {
@@ -184,7 +218,7 @@ async function searchJobs(cfg) {
   await rand(1500, 2500);
   let found = 0, pg = 1;
 
-  while (found < max && !(await checkStop()) && !_skipCurrent) {
+  while (found < max && !(await checkStop()) && !_skipCurrent && !_abortQuery) {
     await waitWhilePaused();
     scrollJobs(); await rand(600, 1000);
     const ids = getJobIds();
@@ -192,21 +226,35 @@ async function searchJobs(cfg) {
     send("log", { text: "Jobs Page " + pg + ": " + ids.length + " cards" });
 
     for (const id of ids) {
-      if (await checkStop() || _skipCurrent || found >= max) break;
+      if (await checkStop() || _skipCurrent || _abortQuery || found >= max) break;
       await waitWhilePaused();
       const { jobs } = await chrome.storage.local.get("jobs");
-      if ((jobs || []).some(j => j.job_id === id)) continue;
+      if ((jobs || []).some(j => j.job_id === id)) { qcount("excludedDupe"); continue; }
       if (!(await clickCard(id))) continue;
       const det = extractJob(id);
+      stampQuery(det, "jobs");
       if (cfg.excludeCompanies && cfg.excludeCompanies.length) {
-        if (cfg.excludeCompanies.some(e => (det.company || "").toLowerCase().includes(e.toLowerCase()))) continue;
+        if (cfg.excludeCompanies.some(e => (det.company || "").toLowerCase().includes(e.toLowerCase()))) {
+          qcount("excludedCompany"); continue;
+        }
       }
-      if (cfg.onlyWithEmail && !det.email) continue;
+      if (cfg.onlyWithEmail && !det.email) {
+        qcount("excludedNoEmail"); continue;
+      }
+      if (det.email && isDomainExcluded(det.email, cfg.excludedEmailDomains)) {
+        qcount("excludedDomain"); await bumpDay({ excludedDomain: 1 }); continue;
+      }
       const saved = await Storage.saveJob(det);
-      if (saved) { found++; send("jobFound", { job: det }); send("log", { text: "[" + found + "] " + det.position + " @ " + det.company + (det.email ? " - " + det.email : "") }); }
+      if (saved) {
+        found++; qcount("found");
+        if (det.email) { qcount("withEmail"); await bumpDay({ found: 1, withEmail: 1 }); }
+        else await bumpDay({ found: 1 });
+        send("jobFound", { job: det });
+        send("log", { text: "[" + found + "] " + det.position + " @ " + det.company + (det.email ? " - " + det.email : "") });
+      } else { qcount("excludedDupe"); }
       await rand(800, 2000);
     }
-    if (await checkStop() || found >= max) break;
+    if (await checkStop() || found >= max || _abortQuery) break;
     if (cfg.jobsFirstPageOnly) break;
     if (!(await nextJobPage(pg))) break;
     pg++;
@@ -1200,7 +1248,7 @@ async function searchPosts(cfg) {
     return [];
   };
 
-  while (!(await checkStop()) && !_skipCurrent) {
+  while (!(await checkStop()) && !_skipCurrent && !_abortQuery) {
     await waitWhilePaused();
     scrollJobs(); await rand(1200, 1800);
     await expandAllOnPage();
@@ -1220,15 +1268,26 @@ async function searchPosts(cfg) {
           email: (allEmails.emails || []).join(", "), applied: "No", connection_sent: "No", composed: "No",
           notes: "", full_post: pageText.slice(0, 2000), source: "posts"
         };
-        const saved = await Storage.saveJob(basic);
-        if (saved) { found++; send("jobFound", { job: basic }); }
+        stampQuery(basic, "posts");
+        if (basic.email && isDomainExcluded(basic.email, cfg.excludedEmailDomains)) {
+          qcount("excludedDomain"); await bumpDay({ excludedDomain: 1 });
+          send("log", { text: "Skipped (excluded domain): " + basic.email });
+        } else {
+          const saved = await Storage.saveJob(basic);
+          if (saved) {
+            found++; qcount("found");
+            if (basic.email) { qcount("withEmail"); await bumpDay({ found: 1, withEmail: 1 }); }
+            else await bumpDay({ found: 1 });
+            send("jobFound", { job: basic });
+          }
+        }
       }
       break;
     }
 
     let newOnPage = 0;
     for (const el of els) {
-      if (await checkStop() || _skipCurrent) break;
+      if (await checkStop() || _skipCurrent || _abortQuery) break;
       await waitWhilePaused();
 
       const urn = el.getAttribute("data-urn") || el.querySelector("a[data-urn]")?.getAttribute("data-urn") || "";
@@ -1259,17 +1318,30 @@ async function searchPosts(cfg) {
       const parsed = LinkedinParser.parsePost(cleanText, meta.profileUrl || poster.poster_profile_url, meta.dateText, "", poster.poster_name);
 
       if (parsed) {
-        if (cfg.onlyWithEmail && !parsed.email) { send("log", { text: "Skipped (no email): " + (poster.poster_name || "unknown") }); }
-        else {
-          Object.assign(parsed, poster);
-          parsed.job_url = postUrl;
-          parsed.source = "posts";
+        Object.assign(parsed, poster);
+        parsed.job_url = postUrl;
+        parsed.source = "posts";
+        stampQuery(parsed, "posts");
+        if (cfg.onlyWithEmail && !parsed.email) {
+          qcount("excludedNoEmail");
+          send("log", { text: "Skipped (no email): " + (poster.poster_name || "unknown") });
+        } else if (parsed.email && isDomainExcluded(parsed.email, cfg.excludedEmailDomains)) {
+          qcount("excludedDomain"); await bumpDay({ excludedDomain: 1 });
+          send("log", { text: "Skipped (excluded domain): " + parsed.email });
+        } else {
           const saved = await Storage.saveJob(parsed);
-          if (saved) { found++; newOnPage++; send("jobFound", { job: parsed }); }
+          if (saved) {
+            found++; newOnPage++; qcount("found");
+            if (parsed.email) { qcount("withEmail"); await bumpDay({ found: 1, withEmail: 1 }); }
+            else await bumpDay({ found: 1 });
+            send("jobFound", { job: parsed });
+          } else qcount("excludedDupe");
         }
       } else {
-        if (cfg.onlyWithEmail) { send("log", { text: "Skipped (no email): " + (poster.poster_name || "unknown") }); }
-        else {
+        if (cfg.onlyWithEmail) {
+          qcount("excludedNoEmail");
+          send("log", { text: "Skipped (no email): " + (poster.poster_name || "unknown") });
+        } else {
           const basic = {
             job_id: "post_" + (postUrl.replace(/[^a-zA-Z0-9]/g, "").slice(-20) || cleanText.slice(0, 20).replace(/\s+/g, "_")),
             date_found: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }),
@@ -1278,8 +1350,13 @@ async function searchPosts(cfg) {
             poster_profile_url: poster.poster_profile_url || "", job_url: postUrl,
             email: "", applied: "No", connection_sent: "No", composed: "No", notes: "", full_post: cleanText.slice(0, 2000), source: "posts"
           };
+          stampQuery(basic, "posts");
           const saved = await Storage.saveJob(basic);
-          if (saved) { found++; newOnPage++; send("jobFound", { job: basic }); send("log", { text: "Saved (no email): " + (poster.poster_name || "unknown poster") }); }
+          if (saved) {
+            found++; newOnPage++; qcount("found"); await bumpDay({ found: 1 });
+            send("jobFound", { job: basic });
+            send("log", { text: "Saved (no email): " + (poster.poster_name || "unknown poster") });
+          } else qcount("excludedDupe");
         }
       }
       await rand(500, 1200);
@@ -1318,22 +1395,36 @@ function buildPhaseQueries(cfg, phase) {
       if (useCompanies) {
         for (const company of companies) {
           for (const fv of filterValues) {
-            qs.push({ keyword: role, location: locs.join(", "), label: "Posts: " + role + locLabel + " @ " + company + " [" + (filterLabels[fv] || "Any time") + "]", query: roleBase + ' AND "' + company + '"', _posts: true, dateFilter: fv });
+            qs.push({ keyword: role, location: locs.join(", "), label: "Posts: " + role + locLabel + " @ " + company + " [" + (filterLabels[fv] || "Any time") + "]", query: roleBase + ' AND "' + company + '"', _posts: true, dateFilter: fv, _id: "posts|" + role + "|" + locs.join(",") + "|" + company + "|" + fv });
           }
         }
       } else {
         for (const fv of filterValues) {
-          qs.push({ keyword: role, location: locs.join(", "), label: "Posts: " + role + locLabel + " [" + (filterLabels[fv] || "Any time") + "]", query: roleBase, _posts: true, dateFilter: fv });
+          qs.push({ keyword: role, location: locs.join(", "), label: "Posts: " + role + locLabel + " [" + (filterLabels[fv] || "Any time") + "]", query: roleBase, _posts: true, dateFilter: fv, _id: "posts|" + role + "|" + locs.join(",") + "||" + fv });
         }
       }
     }
   } else {
     for (const role of cfg.jobRoles || []) {
-      if ((cfg.locations || []).length) { for (const loc of cfg.locations) qs.push({ keyword: role, location: loc, label: "Jobs: " + role + " @ " + loc, _posts: false }); }
-      else { qs.push({ keyword: role, location: "", label: "Jobs: " + role, _posts: false }); }
+      if ((cfg.locations || []).length) { for (const loc of cfg.locations) qs.push({ keyword: role, location: loc, label: "Jobs: " + role + " @ " + loc, _posts: false, _id: "jobs|" + role + "|" + loc }); }
+      else { qs.push({ keyword: role, location: "", label: "Jobs: " + role, _posts: false, _id: "jobs|" + role + "|" }); }
     }
   }
-  return qs;
+  // Disabled queries are dropped here so runPhase and the runAll progress total
+  // always see the same list. _disabledQueries is loaded once per run in runAll.
+  return _disabledQueries.length ? qs.filter(q => _disabledQueries.indexOf(q.label) === -1) : qs;
+}
+
+// Persist the per-query aggregate once per query execution. Called on success,
+// skip, and navigation failure so a query is never recorded twice.
+async function flushQueryStat(extra) {
+  const delta = _qdelta;
+  _qdelta = null;
+  _qctx = null;
+  if (delta) {
+    if (extra) Object.keys(extra).forEach(k => { delta[k] = (delta[k] || 0) + extra[k]; });
+    try { await Storage.addQueryStat(delta); } catch (e) {}
+  }
 }
 
 // fix: returns false on navigation failure (waitEl timeout) so runAll returns early
@@ -1348,9 +1439,18 @@ async function runPhase(cfg, phase, startIdx) {
   for (let i = startIdx; i < queries.length && !(await checkStop()); i++) {
     await waitWhilePaused();
     const q = queries[i];
+    _abortQuery = false;
+    _qctx = { label: q.label, id: q._id, phase, keyword: q.keyword, location: q.location };
+    _qdelta = {
+      id: q._id, label: q.label, phase, keyword: q.keyword, location: q.location,
+      runs: 0, found: 0, withEmail: 0,
+      excludedNoEmail: 0, excludedCompany: 0, excludedDupe: 0, excludedDomain: 0,
+      skipped: 0, failed: 0, completeRuns: 0, interrupted: 0
+    };
     if (_skipCurrent) {
       _skipCurrent = false;
       send("log", { text: "Skipped: " + q.label });
+      await flushQueryStat({ skipped: 1 });
       _progress.completed++;
       broadcastProgress();
       continue;
@@ -1369,6 +1469,9 @@ async function runPhase(cfg, phase, startIdx) {
         if (!loaded) return { failed: true };
         await rand(2000, 3000);
       }
+      // only count a "run" once the searcher actually executes (not pre-skips/nav failures)
+      if (_qdelta) _qdelta.runs = 1;
+      await bumpDay({ runs: 1 });
       return { found: await searcher(cfg) };
     })();
     const rq = await Promise.race([runQuery, skipPromise.then(() => ({ skipped: true }))]);
@@ -1376,6 +1479,11 @@ async function runPhase(cfg, phase, startIdx) {
 
     if (rq.skipped) {
       send("log", { text: "Skipped by user: " + q.label });
+      // A started-but-skipped run is an INTERRUPTED attempt, not a completed run.
+      // It still gets recorded for the dead-query analytics but never counts as a
+      // full run there (dead-query disabling only trusts fully-completed runs).
+      if (_qdelta && _qdelta.runs) _qdelta.interrupted = 1;
+      await flushQueryStat({ skipped: 1 });
       _progress.completed++;
       broadcastProgress();
       const nq = queries[i + 1];
@@ -1385,9 +1493,19 @@ async function runPhase(cfg, phase, startIdx) {
       }
       continue;
     }
-    if (rq.failed) { send("log", { text: "Navigation failed, aborting phase" }); return false; }
+    if (rq.failed) {
+      send("log", { text: "Navigation failed, aborting phase" });
+      await flushQueryStat({ failed: 1 });
+      return false;
+    }
     if (_skipCurrent) _skipCurrent = false;
-    send("log", { text: "=== Complete: " + rq.found + " items ===" });
+    // A stop/abort that lands mid-query makes the searcher return early: the run
+    // was INTERRUPTED, so it must not count as a fully-completed run for the
+    // dead-query decision (charts still use the separate daily counters).
+    const interruptedRun = shouldStop || _abortQuery;
+    send("log", { text: (interruptedRun ? "=== Interrupted: " : "=== Complete: ") + rq.found + " items ===" });
+    if (_qdelta) { if (interruptedRun) _qdelta.interrupted = 1; else _qdelta.completeRuns = 1; }
+    await flushQueryStat();
     _progress.completed++;
     broadcastProgress();
   }
@@ -1399,6 +1517,10 @@ async function runPhase(cfg, phase, startIdx) {
 async function runAll(cfg) {
   shouldStop = false;
   _skipCurrent = false;
+  _abortQuery = false;
+  _qctx = null;
+  _qdelta = null;
+  try { _disabledQueries = await Storage.getDisabledQueries(); } catch (e) { _disabledQueries = []; }
   await chrome.storage.local.set({ searchPaused: false });
   const speed = cfg.searchSpeed || "normal";
   if (speed === "fast") _speedFactor = 0.35;
@@ -1459,6 +1581,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === "startSearching") {
     sendResponse({ ok: true });
     shouldStop = false;
+    bumpDay({ searches: 1 });
     // clear stale activeSearchConfig so fresh start never resumes an old session
     chrome.storage.local.remove("activeSearchConfig").then(() =>
       runAll(msg.config || {}).catch(e => send("log", { text: "Error: " + e.message }))
