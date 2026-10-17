@@ -53,7 +53,40 @@ function toIstDate(isoOrDate) {
   return new Date(d.getTime() + IST_OFFSET_MS);
 }
 
+// A stored `email` field can hold several addresses: the job/post extractor
+// joins them with "\n", while one page fallback historically joined with ", ".
+// Normalise either form into a clean list of individual addresses.
+function parseEmailList(value) {
+  return String(value == null ? "" : value)
+    .split(/[\n,;]+/)
+    .map(s => s.trim())
+    .filter(Boolean);
+}
+
+// Canonical excluded-address test shared by the content script (search-time
+// filter), the background (compose/send) and the analytics dashboard. An
+// address is excluded when the trimmed, lowercased configured entry appears as
+// a substring of the whole lowercased address — this matches what
+// content.js isDomainExcluded() has always done, so the three views agree.
+function emailMatchesExcluded(email, domains) {
+  if (!email || !domains || !domains.length) return false;
+  const e = String(email).toLowerCase();
+  return domains.some(d => { const s = String(d == null ? "" : d).toLowerCase().trim(); return s && e.includes(s); });
+}
+
+// Pick the address a compose/send should target: the first one that is NOT on
+// the user's excluded list. Returns "" when the field has no deliverable
+// address (empty, or every address is excluded).
+function firstDeliverableEmail(value, domains) {
+  const list = parseEmailList(value);
+  for (const e of list) { if (!emailMatchesExcluded(e, domains)) return e; }
+  return "";
+}
+
 const MAX_QUERY_STATS = 2000;
+
+// Serializes bumpDailyStat read-modify-write cycles within this context.
+let _dailyWriteChain = Promise.resolve();
 
 const defaultPreferences = {
   jobRoles: ["AI Engineer", "ML Engineer", "Machine Learning Engineer",
@@ -65,12 +98,6 @@ const defaultPreferences = {
   locationsEnabled: true,
   targetCompanies: [], easyApplyOnly: true, postedWithinDays: 1, maxJobsPerRun: 50,
   targetCompaniesEnabled: true,
-  excludedKeywords: [],
-  targetPosterTitles: ["Talent Acquisition", "Recruiter", "HR", "Hiring Manager",
-    "Technical Recruiter", "People Operations", "Talent Partner",
-    "Head of Talent", "VP of Engineering", "CTO", "Engineering Manager",
-    "Team Lead", "Tech Lead", "Senior Engineer", "Staff Engineer",
-    "Founder", "Co-Founder", "CEO", "Director of Engineering"],
   searchMode: "jobs",
   jobsFirstPageOnly: true,
   onlyWithEmail: false,
@@ -277,14 +304,22 @@ const Storage = {
     return r.dailyStats || {};
   },
 
+  // Serialize read-modify-write bumps so overlapping calls (e.g. the
+  // un-awaited `searches` bump racing a query's run/result bumps) cannot read
+  // the same snapshot and clobber each other's counters. The chain only
+  // guards writers inside THIS context; dailyStats is written solely by the
+  // content script, so a single chain is enough.
   async bumpDailyStat(day, fields) {
     if (!day || !fields) return;
-    const obj = await this.getDailyStats();
-    const e = obj[day] || (obj[day] = { found: 0, withEmail: 0, excluded: 0 });
-    Object.keys(fields).forEach(k => { e[k] = (e[k] || 0) + (fields[k] || 0); });
-    const keys = Object.keys(obj).sort();
-    while (keys.length > 800) delete obj[keys.shift()];
-    await chrome.storage.local.set({ dailyStats: obj });
+    _dailyWriteChain = _dailyWriteChain.then(async () => {
+      const obj = await this.getDailyStats();
+      const e = obj[day] || (obj[day] = { found: 0, withEmail: 0, excluded: 0 });
+      Object.keys(fields).forEach(k => { e[k] = (e[k] || 0) + (fields[k] || 0); });
+      const keys = Object.keys(obj).sort();
+      while (keys.length > 800) delete obj[keys.shift()];
+      await chrome.storage.local.set({ dailyStats: obj });
+    }).catch(() => {});
+    return _dailyWriteChain;
   },
 
   async getDisabledQueries() {
